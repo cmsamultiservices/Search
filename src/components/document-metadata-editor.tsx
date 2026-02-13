@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,12 @@ export type DocumentWithMetadata = {
   paginas?: number | string;
   precio?: number | string;
   universidad?: string;
+};
+
+type ExtraMetadataField = {
+  id: number;
+  key: string;
+  value: string;
 };
 
 type DocumentMetadataEditorProps = {
@@ -58,6 +64,7 @@ export function DocumentMetadataEditor({ document, sectionId, onSaved, open, onO
   const { toast } = useToast();
   const [internalOpen, setInternalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const nextExtraIdRef = useRef(0);
   const controlled = typeof open === "boolean";
   const isOpen = controlled ? open : internalOpen;
   const setOpen = (v: boolean) => {
@@ -71,7 +78,7 @@ export function DocumentMetadataEditor({ document, sectionId, onSaved, open, onO
   const [paginas, setPaginas] = useState("");
   const [precio, setPrecio] = useState("");
   const [universidad, setUniversidad] = useState("");
-  const [extras, setExtras] = useState<Array<{ key: string; value: string }>>([]);
+  const [extras, setExtras] = useState<ExtraMetadataField[]>([]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -82,13 +89,17 @@ export function DocumentMetadataEditor({ document, sectionId, onSaved, open, onO
 
     const extraEntries = Object.keys(initialMetadata)
       .filter((key) => !knownKeys.includes(key))
-      .map((key) => ({ key, value: String(initialMetadata[key] ?? "") }));
+      .map((key) => ({
+        id: nextExtraIdRef.current++,
+        key,
+        value: String(initialMetadata[key] ?? ""),
+      }));
 
     setExtras(extraEntries);
   }, [isOpen, initialMetadata]);
 
   const handleAddExtra = () => {
-    setExtras((prev) => [...prev, { key: "", value: "" }]);
+    setExtras((prev) => [...prev, { id: nextExtraIdRef.current++, key: "", value: "" }]);
   };
 
   const handleExtraChange = (index: number, field: "key" | "value", value: string) => {
@@ -238,7 +249,7 @@ export function DocumentMetadataEditor({ document, sectionId, onSaved, open, onO
             ) : (
               <div className="space-y-3">
                 {extras.map((entry, index) => (
-                  <div key={`${entry.key}-${index}`} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                  <div key={entry.id} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
                     <Input
                       value={entry.key}
                       onChange={(e) => handleExtraChange(index, "key", e.target.value)}
