@@ -513,7 +513,7 @@ export function SearchHero() {
                   addSearch(entry.document);
                 }}
 
-                onMetadataSaved={(doc) => updateSearchMetadata(doc)}
+                onMetadataSaved={handleMetadataSaved}
                 sectionId={activeSection?.id || "default"}
               />
             </div>

@@ -85,7 +85,7 @@ export function DocumentMetadataEditor({ document, sectionId, onSaved, open, onO
       .map((key) => ({ key, value: String(initialMetadata[key] ?? "") }));
 
     setExtras(extraEntries);
-  }, [open, initialMetadata]);
+  }, [isOpen, initialMetadata]);
 
   const handleAddExtra = () => {
     setExtras((prev) => [...prev, { key: "", value: "" }]);
@@ -120,7 +120,8 @@ export function DocumentMetadataEditor({ document, sectionId, onSaved, open, onO
       const key = entry.key.trim();
       const value = entry.value.trim();
       if (!key || !value) return;
-      maybeAssign(key, value);
+      if (knownKeys.includes(key)) return;
+      maybeAssign(key, parseMaybeNumber(value));
     });
 
     return metadata;
