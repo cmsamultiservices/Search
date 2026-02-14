@@ -14,10 +14,15 @@ export interface Document {
   universidad?: string;
 }
 
+const DEFAULT_VISIBLE_EXTENSION = "pdf";
+const CUSTOM_EXTENSIONS_STORAGE_KEY = "documents_custom_extensions";
+
 export function useDocuments() {
   const { settings, isLoaded: settingsLoaded } = useSettings();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedExtensions, setSelectedExtensions] = useState<string[]>([DEFAULT_VISIBLE_EXTENSION]);
+  const [customExtensions, setCustomExtensions] = useState<string[]>([]);
   const [itemsPerPage, setItemsPerPage] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -27,7 +32,45 @@ export function useDocuments() {
     [settings.sections]
   );
 
+  const availableExtensions = useMemo(() => {
+    const fromSettings = Array.isArray(settings.fileExtensions) ? settings.fileExtensions : [];
+    const normalized = fromSettings
+      .map((extension) => extension.toLowerCase().trim().replace(/^\./, ""))
+      .filter(Boolean);
+    const merged = Array.from(new Set([DEFAULT_VISIBLE_EXTENSION, ...normalized, ...customExtensions]));
+    return merged;
+  }, [settings.fileExtensions, customExtensions]);
+
   const [selectedSection, setSelectedSection] = useState<string>(availableSections[0]?.id || "default");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    try {
+      const raw = localStorage.getItem(CUSTOM_EXTENSIONS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+
+      const normalized = parsed
+        .filter((item) => typeof item === "string")
+        .map((item) => item.toLowerCase().trim().replace(/^\./, ""))
+        .filter(Boolean);
+
+      setCustomExtensions(Array.from(new Set(normalized)));
+    } catch (error) {
+      console.error("Failed to read custom extensions:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(CUSTOM_EXTENSIONS_STORAGE_KEY, JSON.stringify(customExtensions));
+    } catch (error) {
+      console.error("Failed to persist custom extensions:", error);
+    }
+  }, [customExtensions]);
 
   useEffect(() => {
     if (!settingsLoaded || availableSections.length === 0) return;
@@ -37,6 +80,16 @@ export function useDocuments() {
       setSelectedSection(availableSections[0].id);
     }
   }, [availableSections, selectedSection, settingsLoaded]);
+
+  useEffect(() => {
+    setSelectedExtensions((previous) => {
+      const stillAllowed = previous.filter((extension) => availableExtensions.includes(extension));
+      if (stillAllowed.length > 0) return stillAllowed;
+      if (availableExtensions.includes(DEFAULT_VISIBLE_EXTENSION)) return [DEFAULT_VISIBLE_EXTENSION];
+      if (availableExtensions.length > 0) return [availableExtensions[0]];
+      return [DEFAULT_VISIBLE_EXTENSION];
+    });
+  }, [availableExtensions]);
 
   useEffect(() => {
     const fetchDocuments = async () => {
@@ -79,15 +132,27 @@ export function useDocuments() {
     return ms;
   }, [documents]);
 
+  const getFileExtension = (nombre: string) => {
+    const raw = nombre.split(".").pop()?.toLowerCase().trim() || "";
+    return raw.replace(/^\./, "");
+  };
+
+  const extensionFilteredDocuments = useMemo(() => {
+    if (selectedExtensions.length === 0) return documents;
+    return documents.filter((doc) => selectedExtensions.includes(getFileExtension(doc.nombre)));
+  }, [documents, selectedExtensions]);
+
   const filteredDocuments = useMemo(() => {
     if (!searchQuery.trim()) {
-      return documents;
+      return extensionFilteredDocuments;
     }
+
     const results = miniSearch.search(searchQuery);
-    return results
+    const searched = results
       .map((result) => documents.find((doc) => doc.id === result.id))
       .filter(Boolean) as Document[];
-  }, [searchQuery, documents, miniSearch]);
+    return searched.filter((doc) => selectedExtensions.includes(getFileExtension(doc.nombre)));
+  }, [searchQuery, documents, miniSearch, extensionFilteredDocuments, selectedExtensions]);
 
   const totalPages = Math.max(1, Math.ceil(filteredDocuments.length / itemsPerPage));
   const paginatedDocuments = useMemo(() => {
@@ -126,12 +191,89 @@ export function useDocuments() {
     );
   };
 
+  const toggleExtension = (extension: string) => {
+    const normalized = extension.toLowerCase().trim().replace(/^\./, "");
+    if (!normalized) return;
+
+    setSelectedExtensions((previous) => {
+      if (previous.includes(normalized)) {
+        if (previous.length === 1) return previous;
+        return previous.filter((item) => item !== normalized);
+      }
+      if (!availableExtensions.includes(normalized)) return previous;
+      return [...previous, normalized];
+    });
+    setCurrentPage(1);
+  };
+
+  const selectAllExtensions = () => {
+    setSelectedExtensions(availableExtensions);
+    setCurrentPage(1);
+  };
+
+  const selectOnlyExtension = (extension: string) => {
+    const normalized = extension.toLowerCase().trim().replace(/^\./, "");
+    if (!normalized) return;
+    if (!availableExtensions.includes(normalized)) return;
+    setSelectedExtensions([normalized]);
+    setCurrentPage(1);
+  };
+
+  const addCustomExtension = (extension: string) => {
+    const normalized = extension.toLowerCase().trim().replace(/^\./, "");
+
+    if (!normalized) {
+      return { ok: false as const, error: "Escribe una extensión válida" };
+    }
+
+    if (!/^[a-z0-9]+$/.test(normalized)) {
+      return { ok: false as const, error: "Solo letras y números en la extensión" };
+    }
+
+    if (availableExtensions.includes(normalized)) {
+      return { ok: false as const, error: "Esa extensión ya existe" };
+    }
+
+    setCustomExtensions((previous) => [...previous, normalized]);
+    setSelectedExtensions((previous) =>
+      previous.includes(normalized) ? previous : [...previous, normalized]
+    );
+    setCurrentPage(1);
+
+    return { ok: true as const, extension: normalized };
+  };
+
+  const removeCustomExtension = (extension: string) => {
+    const normalized = extension.toLowerCase().trim().replace(/^\./, "");
+    if (!normalized || !customExtensions.includes(normalized)) return;
+
+    setCustomExtensions((previous) => previous.filter((item) => item !== normalized));
+    setSelectedExtensions((previous) => {
+      const next = previous.filter((item) => item !== normalized);
+      if (next.length > 0) return next;
+
+      const remaining = availableExtensions.filter((item) => item !== normalized);
+      if (remaining.includes(DEFAULT_VISIBLE_EXTENSION)) return [DEFAULT_VISIBLE_EXTENSION];
+      if (remaining.length > 0) return [remaining[0]];
+      return [DEFAULT_VISIBLE_EXTENSION];
+    });
+    setCurrentPage(1);
+  };
+
   return {
     documents: paginatedDocuments,
     allDocuments: documents,
     availableSections,
+    availableExtensions,
+    customExtensions,
+    selectedExtensions,
     selectedSection,
     setSelectedSection: setSelectedSectionHandler,
+    toggleExtension,
+    selectAllExtensions,
+    selectOnlyExtension,
+    addCustomExtension,
+    removeCustomExtension,
     searchQuery,
     handleSearch,
     itemsPerPage,

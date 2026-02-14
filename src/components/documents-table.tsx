@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Search, ChevronLeft, ChevronRight, FileIcon, ExternalLink } from "lucide-react";
+import { Search, ChevronLeft, ChevronRight, FileIcon, ExternalLink, Filter, Plus, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -11,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Table,
   TableBody,
@@ -21,8 +23,10 @@ import {
 } from "@/components/ui/table";
 import { DocumentMetadataEditor } from "@/components/document-metadata-editor";
 import { useDocuments, type Document } from "@/hooks/use-documents";
+import { useToast } from "@/hooks/use-toast";
 
 export function DocumentsTable() {
+  const { toast } = useToast();
   const {
     documents,
     searchQuery,
@@ -30,8 +34,16 @@ export function DocumentsTable() {
     itemsPerPage,
     handleItemsPerPageChange,
     availableSections,
+    availableExtensions,
+    customExtensions,
+    selectedExtensions,
     selectedSection,
     setSelectedSection,
+    toggleExtension,
+    selectAllExtensions,
+    selectOnlyExtension,
+    addCustomExtension,
+    removeCustomExtension,
     currentPage,
     handlePageChange,
     totalPages,
@@ -45,6 +57,30 @@ export function DocumentsTable() {
     null
   );
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [newExtension, setNewExtension] = useState("");
+
+  const extensionSummary =
+    selectedExtensions.length === 1
+      ? `.${selectedExtensions[0]}`
+      : `${selectedExtensions.length} tipos`;
+
+  const handleAddCustomExtension = () => {
+    const result = addCustomExtension(newExtension);
+    if (!result.ok) {
+      toast({
+        title: "Filtro",
+        description: result.error,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setNewExtension("");
+    toast({
+      title: "Filtro agregado",
+      description: `Se agregó .${result.extension}`,
+    });
+  };
 
   const handleOpenEditor = (doc: Document) => {
     setSelectedDocument(doc);
@@ -109,7 +145,101 @@ export function DocumentsTable() {
           </span>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2">
+                <Filter className="h-4 w-4" />
+                Tipos: {extensionSummary}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium">Extensiones visibles</p>
+                <span className="text-xs text-muted-foreground">
+                  {availableExtensions.length} disponibles
+                </span>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="h-7 text-xs px-2"
+                  onClick={() => selectOnlyExtension("pdf")}
+                >
+                  Solo .pdf
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs px-2"
+                  onClick={selectAllExtensions}
+                >
+                  Todas
+                </Button>
+              </div>
+
+              <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+                {availableExtensions.map((extension) => {
+                  const isCustom = customExtensions.includes(extension);
+                  return (
+                    <div
+                      key={extension}
+                      className="flex items-center justify-between rounded-md border px-2 py-1.5"
+                    >
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <Checkbox
+                          checked={selectedExtensions.includes(extension)}
+                          onCheckedChange={() => toggleExtension(extension)}
+                        />
+                        <span>.{extension}</span>
+                      </label>
+                      {isCustom ? (
+                        <button
+                          type="button"
+                          className="inline-flex h-6 w-6 items-center justify-center rounded-md border hover:bg-accent"
+                          title={`Eliminar .${extension}`}
+                          onClick={() => removeCustomExtension(extension)}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="border-t pt-2 space-y-2">
+                <p className="text-xs text-muted-foreground">Agregar filtro custom</p>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={newExtension}
+                    onChange={(e) => setNewExtension(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddCustomExtension();
+                      }
+                    }}
+                    placeholder=".epub"
+                    className="h-8"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8 px-2"
+                    onClick={handleAddCustomExtension}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
           {/* Sección */}
           {availableSections && availableSections.length > 0 && (
             <div className="flex items-center gap-2">
