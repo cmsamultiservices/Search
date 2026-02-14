@@ -17,7 +17,7 @@ export type DocumentMetadata = {
 };
 
 export type DocumentWithMetadata = {
-  id: number;
+  id: string;
   nombre: string;
   ruta: string;
   metadata?: DocumentMetadata;

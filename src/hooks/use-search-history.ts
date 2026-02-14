@@ -9,7 +9,7 @@ export type DocumentMetadata = {
 };
 
 export type DocumentInfo = {
-  id: number;
+  id: string | number;
   nombre: string;
   ruta: string;
   maestro?: string;
@@ -28,8 +28,14 @@ export type SearchEntry = {
 const STORAGE_KEY = "search_history";
 const MAX_RECENT_SEARCHES = 10;
 
-function hasValidDocumentId(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
+function hasValidDocumentId(value: unknown): value is string | number {
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  return false;
 }
 
 function getDocumentKey(document: Partial<DocumentInfo> | undefined | null): string | null {
@@ -178,6 +184,28 @@ export function useSearchHistory(sectionId: string = "default") {
     [storageKey]
   );
 
+  const removeSearch = useCallback(
+    (document: Partial<DocumentInfo> | null | undefined) => {
+      const documentKey = getDocumentKey(document as DocumentInfo | undefined);
+      if (!documentKey) return;
+
+      setRecentSearches((prev) => {
+        const updated = prev.filter((entry) => getDocumentKey(entry.document) !== documentKey);
+
+        try {
+          if (typeof window !== "undefined") {
+            localStorage.setItem(storageKey, JSON.stringify(updated));
+          }
+        } catch (error) {
+          console.error("Failed to update search history:", error);
+        }
+
+        return updated;
+      });
+    },
+    [storageKey]
+  );
+
   // Clear all history
   const clearHistory = useCallback(() => {
     setRecentSearches([]);
@@ -194,6 +222,7 @@ export function useSearchHistory(sectionId: string = "default") {
     recentSearches,
     addSearch,
     updateSearchMetadata,
+    removeSearch,
     clearHistory,
     isLoaded,
   };

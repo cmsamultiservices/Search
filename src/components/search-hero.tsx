@@ -13,7 +13,6 @@ import { useSearchHistory } from "@/hooks/use-search-history";
 import { RecentSearches } from "@/components/recent-searches";
 import { DocumentDetailsDialog } from "@/components/document-details-dialog";
 import { DocumentMetadataEditor } from "@/components/document-metadata-editor";
-import { mergeDocumentsWithMetadataMap, type MetadataByDocumentId } from "@/lib/document-metadata";
 
 type DocumentMetadata = {
   maestro?: string;
@@ -24,9 +23,10 @@ type DocumentMetadata = {
 };
 
 type Document = {
-  id: number;
+  id: string;
   nombre: string;
   ruta: string;
+  sectionId?: string;
   metadata?: DocumentMetadata;
   maestro?: string;
   paginas?: number | string;
@@ -47,16 +47,25 @@ export function SearchHero() {
   const [isPending, startTransition] = useTransition();
   const [showResults, setShowResults] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
   const { toast } = useToast();
   const { settings, isLoaded } = useSettings();
   const sections = settings.sections?.length ? settings.sections : DEFAULT_SECTIONS;
   const [activeSectionId, setActiveSectionId] = useState(sections[0]?.id ?? 'default');
   const activeSection = sections.find((section) => section.id === activeSectionId) || sections[0];
-  const documentsPath = activeSection?.documentsPath || '/data/documents.json';
   const currentSectionId = activeSection?.id || "default";
-  const { recentSearches, addSearch, clearHistory, isLoaded: historyLoaded, updateSearchMetadata } = useSearchHistory(activeSection?.id || 'default');
+  const {
+    recentSearches,
+    addSearch,
+    clearHistory,
+    isLoaded: historyLoaded,
+    updateSearchMetadata,
+    removeSearch,
+  } = useSearchHistory(activeSection?.id || 'default');
   const isPageLoading = !isLoaded || isIndexing || !historyLoaded || !activeSectionId;
+  const shouldRenderHistoryPanel = !searchQuery && historyLoaded && recentSearches.length > 0;
+  const shouldReserveHistorySpace = shouldRenderHistoryPanel && isHistoryPanelOpen;
 
   const miniSearch = useRef<MiniSearch<Document>>(
     new MiniSearch({
@@ -73,33 +82,17 @@ export function SearchHero() {
     })
   );
 
-  const initializeIndex = useCallback(async (path: string, sectionId: string) => {
+  const initializeIndex = useCallback(async (sectionId: string) => {
     setIsIndexing(true);
     try {
       const normalizedSectionId = sectionId || "default";
-      const [documentsResponse, metadataResponse] = await Promise.all([
-        fetch(path),
-        fetch(`/api/documents-metadata?sectionId=${encodeURIComponent(normalizedSectionId)}`),
-      ]);
-
+      const documentsResponse = await fetch(`/api/documents?sectionId=${encodeURIComponent(normalizedSectionId)}`);
       if (!documentsResponse.ok) {
         throw new Error(`HTTP error! status: ${documentsResponse.status}`);
       }
 
-      const data: { documents: Document[] } = await documentsResponse.json();
-
-      let metadataByDocumentId: MetadataByDocumentId = {};
-      if (metadataResponse.ok) {
-        const metadataPayload = await metadataResponse.json();
-        if (metadataPayload?.metadataByDocumentId && typeof metadataPayload.metadataByDocumentId === "object") {
-          metadataByDocumentId = metadataPayload.metadataByDocumentId as MetadataByDocumentId;
-        }
-      } else {
-        console.warn("Failed to load external metadata:", metadataResponse.status);
-      }
-
-      const mergedDocuments = mergeDocumentsWithMetadataMap(data.documents || [], metadataByDocumentId);
-
+      const data = await documentsResponse.json() as { documents?: Document[] };
+      const mergedDocuments = Array.isArray(data.documents) ? data.documents : [];
       miniSearch.current.removeAll();
       miniSearch.current.addAll(mergedDocuments);
       setDocuments(mergedDocuments);
@@ -116,10 +109,10 @@ export function SearchHero() {
   }, [toast]);
 
   useEffect(() => {
-    if (isLoaded && documentsPath) {
-      initializeIndex(documentsPath, currentSectionId);
+    if (isLoaded && currentSectionId) {
+      initializeIndex(currentSectionId);
     }
-  }, [initializeIndex, isLoaded, documentsPath, currentSectionId]);
+  }, [initializeIndex, isLoaded, currentSectionId]);
 
   useEffect(() => {
     setMounted(true);
@@ -191,7 +184,7 @@ export function SearchHero() {
     }
   };
 
-  const handleCopyPath = async (path: string, docId: number) => {
+  const handleCopyPath = async (path: string, docId: string) => {
     try {
       const directory = path.includes('/')
         ? path.substring(0, path.lastIndexOf('/'))
@@ -318,7 +311,11 @@ export function SearchHero() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-background dark:bg-slate-950">
+    <div
+      className={`min-h-screen flex flex-col bg-background dark:bg-slate-950 transition-[padding-right] duration-300 ${
+        shouldReserveHistorySpace ? "lg:pr-[360px]" : ""
+      }`}
+    >
       {/* Hero Section */}
       <div className={`flex flex-col items-center px-4 transition-all duration-300 ${searchQuery ? 'justify-start pt-4' : 'flex-1 justify-center py-16'
         }`}>
@@ -503,16 +500,17 @@ export function SearchHero() {
 
           {/* Recent and Trending Searches */}
           {/* Recent and Trending Searches */}
-          {!searchQuery && historyLoaded && (
+          {shouldRenderHistoryPanel && (
             <div className="space-y-6 mt-8">
               <RecentSearches
                 searches={recentSearches}
                 onClear={clearHistory}
+                onVisibilityChange={setIsHistoryPanelOpen}
                 onOpenResult={(entry) => {
                   // Increment the counter by calling addSearch when opening a recent file
                   addSearch(entry.document);
                 }}
-
+                onRemoveEntry={(entry) => removeSearch(entry.document)}
                 onMetadataSaved={handleMetadataSaved}
                 sectionId={activeSection?.id || "default"}
               />

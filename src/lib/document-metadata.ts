@@ -5,7 +5,7 @@ export type DocumentMetadata = Record<string, MetadataValue | undefined>;
 export type MetadataByDocumentId = Record<string, DocumentMetadata>;
 
 type GenericDocument = {
-  id: number;
+  id: string | number;
   metadata?: DocumentMetadata;
 };
 

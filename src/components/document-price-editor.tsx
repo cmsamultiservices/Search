@@ -35,12 +35,12 @@ type DocumentPriceFormValues = z.infer<typeof documentPriceSchema>;
 interface DocumentPriceEditorProps {
   open: boolean;
   document: {
-    id: number;
+    id: string;
     nombre: string;
     precio?: number;
   } | null;
   onOpenChange: (open: boolean) => void;
-  onSave: (docId: number, precio: number) => void;
+  onSave: (docId: string, precio: number) => void;
 }
 
 export function DocumentPriceEditor({

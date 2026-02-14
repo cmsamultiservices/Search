@@ -51,7 +51,7 @@ export function DocumentsTable() {
     setIsEditorOpen(true);
   };
 
-  const handleSavePrice = (docId: number, precio: number) => {
+  const handleSavePrice = (docId: string, precio: number) => {
     updateDocumentPrice(docId, precio);
   };
 
@@ -285,7 +285,7 @@ export function DocumentsTable() {
       {/* Editor de precio */}
       <DocumentMetadataEditor
         document={
-          (selectedDocument as any) || { id: -1, nombre: "", ruta: "" }
+          (selectedDocument as any) || { id: "", nombre: "", ruta: "" }
         }
         sectionId={selectedSection}
         open={isEditorOpen}

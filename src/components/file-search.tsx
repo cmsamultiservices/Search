@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useSettings } from "@/hooks/use-settings";
 
 type Document = {
-  id: number;
+  id: string;
   nombre: string;
   ruta: string;
 };
@@ -48,7 +48,7 @@ export function FileSearch() {
   const initializeIndex = useCallback(async () => {
     setIsIndexing(true);
     try {
-      const response = await fetch('/data/documents.json');
+      const response = await fetch('/api/documents?sectionId=default');
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
