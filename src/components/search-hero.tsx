@@ -64,7 +64,7 @@ export function SearchHero() {
     removeSearch,
   } = useSearchHistory(activeSection?.id || 'default');
   const isPageLoading = !isLoaded || isIndexing || !historyLoaded || !activeSectionId;
-  const shouldRenderHistoryPanel = !searchQuery && historyLoaded && recentSearches.length > 0;
+  const shouldRenderHistoryPanel = historyLoaded && recentSearches.length > 0;
   const shouldReserveHistorySpace = shouldRenderHistoryPanel && isHistoryPanelOpen;
 
   const miniSearch = useRef<MiniSearch<Document>>(
