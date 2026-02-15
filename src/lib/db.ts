@@ -68,6 +68,8 @@ const DB_PATH = path.join(DB_DIR, "search.sqlite");
 const LEGACY_SETTINGS_PATH = path.join(process.cwd(), "public", "setting.json");
 const PUBLIC_DATA_DIR = path.join(process.cwd(), "public", "data");
 const LEGACY_MIGRATION_KEY = "legacy_json_migrated_v1";
+const LEGACY_SEED_SECTIONS_CLEANUP_KEY = "legacy_seed_sections_cleanup_v1";
+const LEGACY_SEED_SECTION_IDS = ["libros", "curriculum"] as const;
 
 type StoredDocument = {
   sectionId: string;
@@ -490,6 +492,59 @@ function ensureDatabaseReady(db: SQLiteDatabase) {
   if (!settingsRow?.present) {
     saveSettingsInternal(db, normalizeSettings(DEFAULT_SETTINGS));
   }
+
+  const seedCleanupDone = getMetaValue(db, LEGACY_SEED_SECTIONS_CLEANUP_KEY);
+  if (seedCleanupDone !== "true") {
+    cleanupLegacySeedSections(db);
+    setMetaValue(db, LEGACY_SEED_SECTIONS_CLEANUP_KEY, "true");
+  }
+}
+
+function cleanupLegacySeedSections(db: SQLiteDatabase) {
+  if (fs.existsSync(LEGACY_SETTINGS_PATH)) return;
+
+  const settings = getSettingsInternal(db);
+  if (!Array.isArray(settings.sections) || settings.sections.length === 0) return;
+
+  const legacySectionIds = new Set<string>(LEGACY_SEED_SECTION_IDS);
+  const hasLegacySections = settings.sections.some((section) =>
+    legacySectionIds.has(normalizeSectionId(section.id))
+  );
+  if (!hasLegacySections) return;
+
+  const hasDocumentsInLegacySections = db
+    .prepare(
+      `SELECT 1 AS present
+       FROM documents
+       WHERE section_id IN (?, ?)
+       LIMIT 1`
+    )
+    .get(LEGACY_SEED_SECTION_IDS[0], LEGACY_SEED_SECTION_IDS[1]);
+
+  if (hasDocumentsInLegacySections?.present) return;
+
+  const hasStatsInLegacySections = db
+    .prepare(
+      `SELECT 1 AS present
+       FROM search_stats
+       WHERE section_id IN (?, ?)
+       LIMIT 1`
+    )
+    .get(LEGACY_SEED_SECTION_IDS[0], LEGACY_SEED_SECTION_IDS[1]);
+
+  if (hasStatsInLegacySections?.present) return;
+
+  const cleanedSections = settings.sections.filter((section) => {
+    const sectionId = normalizeSectionId(section.id);
+    const isLegacySeedSection = legacySectionIds.has(sectionId);
+    if (!isLegacySeedSection) return true;
+
+    const hasPaths = Array.isArray(section.indexPaths) && section.indexPaths.length > 0;
+    return hasPaths;
+  });
+
+  if (cleanedSections.length === settings.sections.length) return;
+  saveSettingsInternal(db, { ...settings, sections: cleanedSections });
 }
 
 export function getDb() {

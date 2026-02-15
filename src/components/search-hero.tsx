@@ -4,9 +4,10 @@ import { useState, useEffect, useRef, useCallback, useTransition } from "react";
 import MiniSearch from "minisearch";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FileIcon } from "@/components/file-icon";
-import { Search, Frown, Copy, Check, Tag } from "lucide-react";
+import { Search, Frown, Copy, Check, Tag, X, Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSettings, DEFAULT_SECTIONS } from "@/hooks/use-settings";
 import { useSearchHistory } from "@/hooks/use-search-history";
@@ -49,8 +50,11 @@ export function SearchHero() {
   const [mounted, setMounted] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
+  const [logoUrl, setLogoUrl] = useState("");
+  const [showLogoUpload, setShowLogoUpload] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
-  const { settings, isLoaded } = useSettings();
+  const { settings, isLoaded, updateSettings } = useSettings();
   const sections = settings.sections?.length ? settings.sections : DEFAULT_SECTIONS;
   const [activeSectionId, setActiveSectionId] = useState(sections[0]?.id ?? 'default');
   const activeSection = sections.find((section) => section.id === activeSectionId) || sections[0];
@@ -119,6 +123,12 @@ export function SearchHero() {
   }, []);
 
   useEffect(() => {
+    if (mounted) {
+      setLogoUrl(settings.logoUrl || "");
+    }
+  }, [settings.logoUrl, mounted]);
+
+  useEffect(() => {
     if (!sections.length) return;
     if (!activeSectionId || !sections.some((section) => section.id === activeSectionId)) {
       setActiveSectionId(sections[0].id);
@@ -164,6 +174,84 @@ export function SearchHero() {
       });
     } catch (error) {
       console.error('Failed to record search:', error);
+    }
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast({
+        title: "Error",
+        description: "Por favor selecciona un archivo de imagen válido",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast({
+        title: "Error",
+        description: "El tamaño de la imagen debe ser menor a 2MB",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64String = event.target?.result as string;
+      setLogoUrl(base64String);
+      setShowLogoUpload(false);
+      
+      // Save to settings
+      try {
+        await updateSettings({
+          ...settings,
+          logoUrl: base64String,
+        });
+        toast({
+          title: "Éxito",
+          description: "Logo actualizado correctamente",
+        });
+      } catch (error) {
+        console.error('Error saving logo:', error);
+        toast({
+          title: "Error",
+          description: "No se pudo guardar el logo",
+          variant: "destructive",
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+
+    if (logoInputRef.current) {
+      logoInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    setLogoUrl("");
+    setShowLogoUpload(false);
+    
+    // Save to settings
+    try {
+      await updateSettings({
+        ...settings,
+        logoUrl: "",
+      });
+      toast({
+        title: "Éxito",
+        description: "Logo eliminado",
+      });
+    } catch (error) {
+      console.error('Error removing logo:', error);
+      toast({
+        title: "Error",
+        description: "No se pudo eliminar el logo",
+        variant: "destructive",
+      });
     }
   };
 
@@ -324,16 +412,60 @@ export function SearchHero() {
           {/* Logo/Title */}
           <div className={`text-center transition-all duration-300 ${searchQuery ? 'space-y-1' : 'space-y-4'
             }`}>
-            {mounted && settings.logoUrl && (
-              <img
-                src={settings.logoUrl}
-                alt="Logo"
-                className={`mx-auto object-contain transition-all duration-300 ${searchQuery ? 'max-h-12' : 'max-h-24'
-                  } max-w-full`}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
+            {mounted && (settings.logoUrl || logoUrl) && !showLogoUpload && (
+              <div className="relative inline-block group">
+                <img
+                  src={logoUrl || settings.logoUrl}
+                  alt="Logo"
+                  className={`mx-auto object-contain transition-all duration-300 cursor-pointer group-hover:opacity-75 ${searchQuery ? 'max-h-12' : 'max-h-24'
+                    } max-w-full`}
+                  onClick={() => setShowLogoUpload(true)}
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+                <div className="absolute inset-0 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={() => logoInputRef.current?.click()}
+                    className="bg-black/50 hover:bg-black/70 text-white p-2 rounded"
+                    title="Cambiar logo"
+                  >
+                    <Upload className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={handleRemoveLogo}
+                    className="bg-black/50 hover:bg-black/70 text-white p-2 rounded"
+                    title="Eliminar logo"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+            {showLogoUpload && (
+              <div className="flex flex-col items-center gap-2 p-4 border-2 border-dashed rounded-lg bg-muted/50">
+                <Upload className="h-6 w-6 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">Arrastra una imagen o haz clic para seleccionar</p>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleLogoUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => logoInputRef.current?.click()}
+                  className="text-xs text-primary underline"
+                >
+                  Seleccionar imagen
+                </button>
+                <button
+                  onClick={() => setShowLogoUpload(false)}
+                  className="text-xs text-muted-foreground underline mt-2"
+                >
+                  Cancelar
+                </button>
+              </div>
             )}
             {(mounted && (settings.showAppTitle || settings.showAppSubtitle)) || !mounted ? (
               <div className={`transition-all duration-300 ${searchQuery ? 'space-y-0' : 'space-y-2'
@@ -519,8 +651,47 @@ export function SearchHero() {
 
           {/* Footer Info */}
           {!showResults && !isIndexing && (
-            <div className="text-center py-8 text-sm text-gray-600 dark:text-gray-400">
-              <p>{documents.length} archivos indexados en {activeSection?.label ?? 'esta sección'}</p>
+            <div className="text-center py-8 text-sm">
+              {sections.length === 0 ? (
+                <div className="space-y-3">
+                  <Frown className="mx-auto h-10 w-10 text-gray-400 dark:text-gray-500" />
+                  <div className="space-y-2">
+                    <p className="text-gray-600 dark:text-gray-300 font-medium">
+                      No hay secciones configuradas
+                    </p>
+                    <p className="text-gray-500 dark:text-gray-400 text-xs">
+                      Para comenzar, debes:
+                    </p>
+                    <ul className="text-gray-500 dark:text-gray-400 text-xs space-y-1">
+                      <li>1. Acceder a Configuración (ícono de engranaje)</li>
+                      <li>2. Crear una nueva sección</li>
+                      <li>3. Agregar rutas de búsqueda a la sección</li>
+                      <li>4. Indexar los documentos</li>
+                    </ul>
+                  </div>
+                </div>
+              ) : documents.length === 0 ? (
+                <div className="space-y-3">
+                  <Frown className="mx-auto h-10 w-10 text-gray-400 dark:text-gray-500" />
+                  <div className="space-y-2">
+                    <p className="text-gray-600 dark:text-gray-300 font-medium">
+                      No hay datos en esta sección
+                    </p>
+                    <p className="text-gray-500 dark:text-gray-400 text-xs">
+                      Para agregar documentos, puede:
+                    </p>
+                    <ul className="text-gray-500 dark:text-gray-400 text-xs space-y-1">
+                      <li>• Agregar rutas de búsqueda en Configuración</li>
+                      <li>• Indexar los documentos</li>
+                      <li>• Usar las APIs para sincronizar datos</li>
+                    </ul>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-gray-600 dark:text-gray-400">
+                  {documents.length} archivos indexados en {activeSection?.label ?? 'esta sección'}
+                </p>
+              )}
             </div>
           )}
         </div>
