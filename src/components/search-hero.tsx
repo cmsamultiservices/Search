@@ -14,6 +14,8 @@ import { useSearchHistory } from "@/hooks/use-search-history";
 import { RecentSearches } from "@/components/recent-searches";
 import { DocumentDetailsDialog } from "@/components/document-details-dialog";
 import { DocumentMetadataEditor } from "@/components/document-metadata-editor";
+import { authClient } from "@/lib/auth/client";
+import { canAccessGlobalSettings } from "@/lib/auth/permissions";
 
 type DocumentMetadata = {
   maestro?: string;
@@ -40,6 +42,14 @@ type SearchResult = Document & {
   match: Record<string, string[]>;
 };
 
+function normalizeSearchTerm(term: string): string {
+  return term
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
 export function SearchHero() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[] | Document[]>([]);
@@ -55,6 +65,7 @@ export function SearchHero() {
   const logoInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const { settings, isLoaded, updateSettings } = useSettings();
+  const { data: sessionData, isPending: isSessionPending } = authClient.useSession();
   const sections = settings.sections?.length ? settings.sections : DEFAULT_SECTIONS;
   const [activeSectionId, setActiveSectionId] = useState(sections[0]?.id ?? 'default');
   const activeSection = sections.find((section) => section.id === activeSectionId) || sections[0];
@@ -70,13 +81,15 @@ export function SearchHero() {
   const isPageLoading = !isLoaded || isIndexing || !historyLoaded || !activeSectionId;
   const shouldRenderHistoryPanel = historyLoaded && recentSearches.length > 0;
   const shouldReserveHistorySpace = shouldRenderHistoryPanel && isHistoryPanelOpen;
+  const canManageGlobalSettings =
+    !isSessionPending && canAccessGlobalSettings(sessionData?.user);
 
   const miniSearch = useRef<MiniSearch<Document>>(
     new MiniSearch({
       fields: ["nombre", "ruta"],
       storeFields: ["nombre", "ruta", "metadata", "maestro", "paginas", "precio", "universidad"],
       idField: "id",
-      processTerm: (term) => term.toLowerCase().trim(),
+      processTerm: (term) => normalizeSearchTerm(term),
       searchOptions: {
         prefix: true,
         fuzzy: (term) => term.length > 2 ? 0.15 : 0,
@@ -141,17 +154,51 @@ export function SearchHero() {
     setShowResults(false);
   }, [activeSectionId]);
 
+  const getFileExtension = useCallback((filename: string): string => {
+    const parts = filename.split('.');
+    if (parts.length > 1) {
+      return parts[parts.length - 1].toLowerCase();
+    }
+    return '';
+  }, []);
+
+  const isFileExtensionAllowed = useCallback((filename: string): boolean => {
+    const ext = getFileExtension(filename);
+    if (!ext) return false;
+    return (settings.fileExtensions || ['pdf', 'docx']).includes(ext);
+  }, [getFileExtension, settings.fileExtensions]);
+
+  const runSearch = useCallback((rawQuery: string): SearchResult[] => {
+    const query = rawQuery.trim();
+    if (!query) return [];
+
+    const baseOptions = {
+      prefix: true,
+      fuzzy: (term: string) => term.length > 2 ? 0.15 : 0,
+      boost: { nombre: 10, ruta: 3 },
+      combineWith: "AND" as const,
+    };
+
+    let results = miniSearch.current.search(query, baseOptions) as unknown as SearchResult[];
+
+    // Fallback to OR when strict AND returns no matches.
+    if (results.length === 0 && query.includes(" ")) {
+      results = miniSearch.current.search(query, { ...baseOptions, combineWith: "OR" as const }) as unknown as SearchResult[];
+    }
+
+    return results
+      .filter((result) => isFileExtensionAllowed(result.nombre))
+      .slice(0, 10);
+  }, [isFileExtensionAllowed]);
+
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     const query = e.target.value;
     setSearchQuery(query);
-    setShowResults(query.length > 0);
+    setShowResults(query.trim().length > 0);
 
     startTransition(() => {
-      if (query.length > 0) {
-        let results = miniSearch.current.search(query) as any as SearchResult[];
-        // Filter by file extensions
-        results = results.filter((result) => isFileExtensionAllowed(result.nombre));
-        setSearchResults(results.slice(0, 10));
+      if (query.trim().length > 0) {
+        setSearchResults(runSearch(query));
       } else {
         setSearchResults([]);
       }
@@ -178,6 +225,15 @@ export function SearchHero() {
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canManageGlobalSettings) {
+      toast({
+        title: "Permiso requerido",
+        description: "Necesitas permisos globales para cambiar el logo.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -232,6 +288,15 @@ export function SearchHero() {
   };
 
   const handleRemoveLogo = async () => {
+    if (!canManageGlobalSettings) {
+      toast({
+        title: "Permiso requerido",
+        description: "Necesitas permisos globales para cambiar el logo.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setLogoUrl("");
     setShowLogoUpload(false);
     
@@ -309,38 +374,17 @@ export function SearchHero() {
   };
 
 
-  const getFileExtension = (filename: string): string => {
-    const parts = filename.split('.');
-    if (parts.length > 1) {
-      return parts[parts.length - 1].toLowerCase();
-    }
-    return '';
-  };
-
-  const isFileExtensionAllowed = (filename: string): boolean => {
-    const ext = getFileExtension(filename);
-    if (!ext) return false;
-    return (settings.fileExtensions || ['pdf', 'docx']).includes(ext);
-  };
-
   const getExtensionColor = (ext: string): { bg: string; text: string } => {
-    const colors: Record<string, { bg: string; text: string }> = {
-      pdf: { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400' },
-      doc: { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-400' },
-      docx: { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-400' },
-      xls: { bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' },
-      xlsx: { bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' },
-      ppt: { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-400' },
-      pptx: { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-400' },
-      txt: { bg: 'bg-gray-100 dark:bg-gray-800', text: 'text-gray-700 dark:text-gray-400' },
-      jpg: { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-400' },
-      jpeg: { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-400' },
-      png: { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-400' },
-      gif: { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-400' },
-      zip: { bg: 'bg-yellow-100 dark:bg-yellow-900/30', text: 'text-yellow-700 dark:text-yellow-400' },
-      rar: { bg: 'bg-yellow-100 dark:bg-yellow-900/30', text: 'text-yellow-700 dark:text-yellow-400' },
-    };
-    return colors[ext] || { bg: 'bg-gray-100 dark:bg-gray-800', text: 'text-gray-700 dark:text-gray-400' };
+    const primaryExts = new Set(["doc", "docx", "xls", "xlsx", "jpg", "jpeg", "png", "gif"]);
+    const accentExts = new Set(["pdf", "ppt", "pptx"]);
+
+    if (primaryExts.has(ext)) {
+      return { bg: "bg-primary/10", text: "text-primary" };
+    }
+    if (accentExts.has(ext)) {
+      return { bg: "bg-accent/10", text: "text-accent" };
+    }
+    return { bg: "bg-muted", text: "text-muted-foreground" };
   };
 
   const getDocumentMetadata = (doc: Document): DocumentMetadata => {
@@ -365,9 +409,7 @@ export function SearchHero() {
       miniSearch.current.addAll(updatedDocs);
 
       if (searchQuery.trim()) {
-        let results = miniSearch.current.search(searchQuery) as any as SearchResult[];
-        results = results.filter((result) => isFileExtensionAllowed(result.nombre));
-        setSearchResults(results.slice(0, 10));
+        setSearchResults(runSearch(searchQuery));
       } else {
         setSearchResults([]);
       }
@@ -380,7 +422,7 @@ export function SearchHero() {
 
   if (isPageLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background dark:bg-slate-950">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="w-full max-w-2xl px-4 space-y-6">
           <div className="space-y-3 text-center">
             <Skeleton className="h-8 w-48 mx-auto" />
@@ -400,7 +442,7 @@ export function SearchHero() {
 
   return (
     <div
-      className={`min-h-screen flex flex-col bg-background dark:bg-slate-950 transition-[padding-right] duration-300 ${
+      className={`min-h-screen flex flex-col transition-[padding-right] duration-300 ${
         shouldReserveHistorySpace ? "lg:pr-[360px]" : ""
       }`}
     >
@@ -417,32 +459,38 @@ export function SearchHero() {
                 <img
                   src={logoUrl || settings.logoUrl}
                   alt="Logo"
-                  className={`mx-auto object-contain transition-all duration-300 cursor-pointer group-hover:opacity-75 ${searchQuery ? 'max-h-12' : 'max-h-24'
+                  className={`mx-auto object-contain transition-all duration-300 ${canManageGlobalSettings ? 'cursor-pointer group-hover:opacity-75' : ''} ${searchQuery ? 'max-h-12' : 'max-h-24'
                     } max-w-full`}
-                  onClick={() => setShowLogoUpload(true)}
+                  onClick={() => {
+                    if (canManageGlobalSettings) {
+                      setShowLogoUpload(true);
+                    }
+                  }}
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = 'none';
                   }}
                 />
-                <div className="absolute inset-0 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => logoInputRef.current?.click()}
-                    className="bg-black/50 hover:bg-black/70 text-white p-2 rounded"
-                    title="Cambiar logo"
-                  >
-                    <Upload className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={handleRemoveLogo}
-                    className="bg-black/50 hover:bg-black/70 text-white p-2 rounded"
-                    title="Eliminar logo"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
+                {canManageGlobalSettings ? (
+                  <div className="absolute inset-0 flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => logoInputRef.current?.click()}
+                      className="bg-black/50 hover:bg-black/70 text-white p-2 rounded"
+                      title="Cambiar logo"
+                    >
+                      <Upload className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={handleRemoveLogo}
+                      className="bg-black/50 hover:bg-black/70 text-white p-2 rounded"
+                      title="Eliminar logo"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : null}
               </div>
             )}
-            {showLogoUpload && (
+            {showLogoUpload && canManageGlobalSettings && (
               <div className="flex flex-col items-center gap-2 p-4 border-2 border-dashed rounded-lg bg-muted/50">
                 <Upload className="h-6 w-6 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">Arrastra una imagen o haz clic para seleccionar</p>
@@ -471,13 +519,13 @@ export function SearchHero() {
               <div className={`transition-all duration-300 ${searchQuery ? 'space-y-0' : 'space-y-2'
                 }`}>
                 {(mounted && settings.showAppTitle) || !mounted ? (
-                  <h1 className={`font-bold tracking-tight transition-all duration-300 text-foreground dark:text-white ${searchQuery ? 'text-2xl' : 'text-5xl md:text-6xl'
+                  <h1 className={`font-bold tracking-tight transition-all duration-300 text-foreground ${searchQuery ? 'text-2xl' : 'text-5xl md:text-6xl'
                     }`}>
                     {mounted ? (settings.appTitle || 'FileFinder') : 'FileFinder'}
                   </h1>
                 ) : null}
                 {(mounted && settings.showAppSubtitle) || !mounted ? (
-                  <p className={`transition-all duration-300 text-gray-600 dark:text-gray-300 ${searchQuery ? 'text-xs' : 'text-lg'
+                  <p className={`transition-all duration-300 text-muted-foreground ${searchQuery ? 'text-xs' : 'text-lg'
                     }`}>
                     {mounted ? (settings.appSubtitle || 'Encuentra tus archivos locales al instante') : 'Encuentra tus archivos locales al instante'}
                   </p>
@@ -516,19 +564,25 @@ export function SearchHero() {
           {/* Search Box */}
           <div className="relative">
             <div className="relative flex items-center">
-              <Search className="absolute left-4 h-5 w-5 text-muted-foreground dark:text-gray-400" />
+              <Search className="absolute left-4 h-5 w-5 text-muted-foreground" />
               <Input
                 type="search"
                 placeholder={activeSection ? `Buscar ${activeSection.label.toLowerCase()} por nombre o ruta...` : 'Buscar por nombre o ruta...'}
-                className="w-full pl-12 pr-4 h-12 text-base rounded-full shadow-lg border-2 border-transparent focus:border-primary bg-card dark:bg-slate-800 text-foreground dark:text-white placeholder-muted-foreground dark:placeholder-gray-400 focus-visible:ring-2 focus-visible:ring-primary transition-colors"
+                className="w-full pl-12 pr-4 h-12 text-base rounded-full shadow-lg border-2 border-transparent focus:border-primary bg-card/80 backdrop-blur-sm text-foreground placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-primary transition-colors"
                 value={searchQuery}
                 onChange={handleSearch}
                 onFocus={() => searchQuery && setShowResults(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleOpenFirstResult();
+                  }
+                }}
               />
               {searchQuery && (
                 <button
                   onClick={handleClear}
-                  className="absolute right-4 text-muted-foreground dark:text-gray-400 hover:text-foreground dark:hover:text-white transition-colors"
+                  className="absolute right-4 text-muted-foreground hover:text-foreground transition-colors"
                   aria-label="Clear search"
                 >
                   <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -540,7 +594,7 @@ export function SearchHero() {
 
             {/* Results Dropdown */}
             {showResults && (
-              <div className="absolute top-full left-0 right-0 mt-4 max-h-96 overflow-y-auto rounded-lg border border-primary/30 dark:border-primary/50 bg-card dark:bg-slate-800 shadow-lg z-50">
+              <div className="absolute top-full left-0 right-0 mt-4 max-h-96 overflow-y-auto rounded-lg border border-primary/30 bg-card/90 backdrop-blur-sm shadow-lg z-50">
                 {isIndexing ? (
                   <div className="p-4 space-y-3">
                     {Array.from({ length: 3 }).map((_, i) => (
@@ -558,7 +612,7 @@ export function SearchHero() {
                     {searchResults.map((doc) => (
                       <div
                         key={doc.id}
-                        className="p-3 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md transition-colors group flex items-center justify-between"
+                        className="p-3 hover:bg-accent/20 rounded-md transition-colors group flex items-center justify-between"
                       >
                         <div className="flex items-center gap-1">
                           <button
@@ -566,11 +620,11 @@ export function SearchHero() {
                               e.preventDefault();
                               handleCopyPath(doc.ruta, doc.id);
                             }}
-                            className="p-2 rounded hover:bg-accent/20 dark:hover:bg-accent/30 text-muted-foreground dark:text-gray-400 hover:text-foreground dark:hover:text-white transition-colors flex-shrink-0"
+                            className="p-2 rounded hover:bg-accent/20 text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
                             title="Copiar ruta"
                           >
                           {copiedId === doc.id ? (
-                            <Check className="h-4 w-4 text-green-600" />
+                            <Check className="h-4 w-4 text-primary" />
                           ) : (
                             <Copy className="h-4 w-4" />
                           )}
@@ -596,9 +650,9 @@ export function SearchHero() {
                           }}
                         >
                           <div className="flex items-center gap-2">
-                            <p className="font-medium text-sm truncate text-foreground dark:text-white">{doc.nombre}</p>
+                            <p className="font-medium text-sm truncate text-foreground">{doc.nombre}</p>
                             {getPrecioLabel(doc) && (
-                              <span className="text-xs font-semibold px-2 py-0.5 rounded whitespace-nowrap flex-shrink-0 bg-emerald-600/10 text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1">
+                              <span className="text-xs font-semibold px-2 py-0.5 rounded whitespace-nowrap flex-shrink-0 bg-primary/10 text-primary inline-flex items-center gap-1">
                                 <Tag className="h-3 w-3" />
                                 {getPrecioLabel(doc)}
                               </span>
@@ -613,15 +667,15 @@ export function SearchHero() {
                               );
                             })()}
                           </div>
-                          <p className="text-xs text-muted-foreground dark:text-gray-400 truncate">{doc.ruta}</p>
+                          <p className="text-xs text-muted-foreground truncate">{doc.ruta}</p>
                         </a>
                       </div>
                     ))}
                   </div>
                 ) : searchQuery ? (
                   <div className="p-8 text-center">
-                    <Frown className="mx-auto h-8 w-8 text-gray-500 dark:text-gray-400 mb-2" />
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                    <Frown className="mx-auto h-8 w-8 text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground">
                       Sin resultados para "{searchQuery}"
                     </p>
                   </div>
@@ -654,33 +708,35 @@ export function SearchHero() {
             <div className="text-center py-8 text-sm">
               {sections.length === 0 ? (
                 <div className="space-y-3">
-                  <Frown className="mx-auto h-10 w-10 text-gray-400 dark:text-gray-500" />
+                  <Frown className="mx-auto h-10 w-10 text-muted-foreground" />
                   <div className="space-y-2">
-                    <p className="text-gray-600 dark:text-gray-300 font-medium">
+                    <p className="text-muted-foreground font-medium">
                       No hay secciones configuradas
                     </p>
-                    <p className="text-gray-500 dark:text-gray-400 text-xs">
+                    <p className="text-muted-foreground text-xs">
                       Para comenzar, debes:
                     </p>
-                    <ul className="text-gray-500 dark:text-gray-400 text-xs space-y-1">
-                      <li>1. Acceder a Configuración (ícono de engranaje)</li>
-                      <li>2. Crear una nueva sección</li>
-                      <li>3. Agregar rutas de búsqueda a la sección</li>
-                      <li>4. Indexar los documentos</li>
+                    <ul className="text-muted-foreground text-xs space-y-1">
+                      <li>1. Iniciar sesión con un usuario con permisos globales</li>
+                      <li>2. Acceder a Configuración (ícono de engranaje)</li>
+                      <li>3. Crear una nueva sección</li>
+                      <li>4. Agregar rutas de búsqueda a la sección</li>
+                      <li>5. Indexar los documentos</li>
                     </ul>
                   </div>
                 </div>
               ) : documents.length === 0 ? (
                 <div className="space-y-3">
-                  <Frown className="mx-auto h-10 w-10 text-gray-400 dark:text-gray-500" />
+                  <Frown className="mx-auto h-10 w-10 text-muted-foreground" />
                   <div className="space-y-2">
-                    <p className="text-gray-600 dark:text-gray-300 font-medium">
+                    <p className="text-muted-foreground font-medium">
                       No hay datos en esta sección
                     </p>
-                    <p className="text-gray-500 dark:text-gray-400 text-xs">
+                    <p className="text-muted-foreground text-xs">
                       Para agregar documentos, puede:
                     </p>
-                    <ul className="text-gray-500 dark:text-gray-400 text-xs space-y-1">
+                    <ul className="text-muted-foreground text-xs space-y-1">
+                      <li>• Iniciar sesión para editar configuración global</li>
                       <li>• Agregar rutas de búsqueda en Configuración</li>
                       <li>• Indexar los documentos</li>
                       <li>• Usar las APIs para sincronizar datos</li>
@@ -688,7 +744,7 @@ export function SearchHero() {
                   </div>
                 </div>
               ) : (
-                <p className="text-gray-600 dark:text-gray-400">
+                <p className="text-muted-foreground">
                   {documents.length} archivos indexados en {activeSection?.label ?? 'esta sección'}
                 </p>
               )}

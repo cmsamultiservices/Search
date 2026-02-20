@@ -18,6 +18,8 @@ import { Settings, RotateCcw, Plus, X, Zap, Upload, Sun, Moon, FolderOpen, Layou
 import { useSettings, DEFAULT_SECTIONS, Section } from "@/hooks/use-settings";
 import { useTheme } from "@/hooks/use-theme";
 import { useToast } from "@/hooks/use-toast";
+import { authClient } from "@/lib/auth/client";
+import { getUserGrade, getUserRole } from "@/lib/auth/permissions";
 
 type Theme = 'light' | 'dark' | 'system';
 
@@ -44,10 +46,17 @@ export function SettingsDialog() {
   const [isSyncing, setIsSyncing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const { data: sessionData } = authClient.useSession();
 
   const COMMON_EXTENSIONS = ['pdf', 'docx', 'xlsx', 'pptx', 'txt', 'doc', 'xls', 'ppt', 'jpg', 'png', 'zip', 'rar'];
   const activeIndexSection = sections.find((section) => section.id === indexSectionId) || sections[0];
   const activeIndexPaths = activeIndexSection?.indexPaths || [];
+  const currentUserName =
+    sessionData?.user?.name && typeof sessionData.user.name === "string"
+      ? sessionData.user.name
+      : "Usuario";
+  const currentRole = getUserRole(sessionData?.user);
+  const currentGrade = getUserGrade(sessionData?.user);
 
   const normalizeSectionId = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9-_]/g, '');
 
@@ -422,7 +431,7 @@ export function SettingsDialog() {
           <Settings className="h-4 w-4" />
         </Button>
       </DialogTrigger>
-      <DialogContent className="w-[96vw] max-w-[1200px] h-[90vh] p-0 overflow-hidden gap-0">
+      <DialogContent className="w-[96vw] max-w-[1200px] h-[90vh] p-0 overflow-hidden gap-0 border-border bg-card/95 backdrop-blur-xl">
         <DialogHeader className="sr-only">
           <DialogTitle>Configuración</DialogTitle>
           <DialogDescription>
@@ -430,48 +439,50 @@ export function SettingsDialog() {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid h-full min-h-0 md:grid-cols-[256px_1fr] bg-slate-50 dark:bg-slate-950">
-          <aside className="hidden md:flex border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex-col">
+        <div className="grid h-full min-h-0 md:grid-cols-[256px_1fr] bg-background/70">
+          <aside className="hidden md:flex border-r border-border bg-card/80 flex-col">
             <div className="p-6">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-cyan-500 text-white flex items-center justify-center">
+                <div className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center">
                   <Settings className="h-4 w-4" />
                 </div>
                 <p className="font-bold tracking-tight">FileFinder</p>
               </div>
             </div>
             <nav className="flex-1 px-4 space-y-1 overflow-y-auto text-sm">
-              <a href="#branding" className="flex items-center gap-3 px-4 py-3 bg-cyan-500/10 text-cyan-600 rounded-xl font-medium">
+              <a href="#branding" className="flex items-center gap-3 px-4 py-3 bg-primary/10 text-primary rounded-xl font-medium">
                 <Upload className="h-5 w-5" />
                 General
               </a>
-              <a href="#indexacion" className="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">
+              <a href="#indexacion" className="flex items-center gap-3 px-4 py-3 text-muted-foreground hover:bg-accent/20 rounded-xl transition-all">
                 <FolderOpen className="h-5 w-5" />
                 Indexación
               </a>
-              <a href="#secciones" className="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">
+              <a href="#secciones" className="flex items-center gap-3 px-4 py-3 text-muted-foreground hover:bg-accent/20 rounded-xl transition-all">
                 <LayoutGrid className="h-5 w-5" />
                 Secciones
               </a>
-              <a href="#extensiones" className="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">
+              <a href="#extensiones" className="flex items-center gap-3 px-4 py-3 text-muted-foreground hover:bg-accent/20 rounded-xl transition-all">
                 <Puzzle className="h-5 w-5" />
                 Extensiones
               </a>
             </nav>
-            <div className="p-6 border-t border-slate-200 dark:border-slate-800">
+            <div className="p-6 border-t border-border">
               <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-500">
+                <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
                   <UserCircle2 className="h-5 w-5" />
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-sm font-semibold">Admin User</span>
-                  <span className="text-xs text-slate-500">Pro Version</span>
+                  <span className="text-sm font-semibold">{currentUserName}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {currentRole} · G{currentGrade}
+                  </span>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={handleToggleTheme}
-                className="w-full flex items-center justify-center gap-2 py-2 border border-slate-200 dark:border-slate-800 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                className="w-full flex items-center justify-center gap-2 py-2 border border-border rounded-lg hover:bg-accent/20 transition-colors"
               >
                 {selectedTheme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 <span className="text-xs font-medium">Cambiar Tema</span>
@@ -480,16 +491,16 @@ export function SettingsDialog() {
           </aside>
 
           <div className="min-h-0 flex flex-col">
-            <header className="h-16 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-8 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md sticky top-0 z-10">
+            <header className="h-16 border-b border-border flex items-center justify-between px-8 bg-card/70 backdrop-blur-md sticky top-0 z-10">
               <div className="flex items-center gap-2 text-sm">
-                <span className="text-slate-400">Configuración</span>
-                <ChevronRight className="h-4 w-4 text-slate-400" />
+                <span className="text-muted-foreground">Configuración</span>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
                 <span className="font-semibold">General & Branding</span>
               </div>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                className="text-muted-foreground hover:text-foreground transition-colors"
                 title="Cerrar"
               >
                 <X className="h-5 w-5" />
@@ -500,24 +511,24 @@ export function SettingsDialog() {
           {/* Branding Section */}
           <section id="branding" className="max-w-4xl">
             <h2 className="text-xl font-bold mb-1">Imagen del Logo</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Sube una imagen o pega una URL para personalizar la identidad visual de tu aplicación.</p>
+            <p className="text-sm text-muted-foreground mb-6">Sube una imagen o pega una URL para personalizar la identidad visual de tu aplicación.</p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-white/5 rounded-2xl p-8 flex flex-col items-center justify-center group cursor-pointer hover:border-cyan-500 transition-colors"
+                className="border-2 border-dashed border-border bg-card/70 rounded-2xl p-8 flex flex-col items-center justify-center group cursor-pointer hover:border-primary transition-colors"
               >
-                <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center mb-4 group-hover:bg-cyan-500/10 transition-colors">
-                  <Upload className="h-5 w-5 text-slate-400 group-hover:text-cyan-500 transition-colors" />
+                <div className="w-12 h-12 bg-muted rounded-xl flex items-center justify-center mb-4 group-hover:bg-primary/10 transition-colors">
+                  <Upload className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
                 </div>
                 <p className="text-sm font-medium mb-1">{logoUrl ? "Click para cambiar logo" : "Click para subir logo"}</p>
-                <p className="text-xs text-slate-400">PNG, SVG hasta 2MB</p>
+                <p className="text-xs text-muted-foreground">PNG, SVG hasta 2MB</p>
               </button>
 
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="logo-url-input" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
+                  <Label htmlFor="logo-url-input" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
                     URL del Logo
                   </Label>
                   <Input
@@ -525,7 +536,7 @@ export function SettingsDialog() {
                     placeholder="https://ejemplo.com/logo.png"
                     value={logoUrl}
                     onChange={(e) => setLogoUrl(e.target.value)}
-                    className="w-full px-4 py-3 h-12 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-cyan-500 focus:border-transparent outline-none transition-all"
+                    className="w-full px-4 py-3 h-12 bg-background border border-border rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent outline-none transition-all"
                   />
                 </div>
                 <div className="flex gap-2">
@@ -539,7 +550,7 @@ export function SettingsDialog() {
                   </Button>
                 </div>
                 {logoUrl && (
-                  <div className="mt-3 p-3 border border-slate-200 dark:border-slate-700 rounded-xl flex justify-center bg-slate-50/70 dark:bg-slate-800/40">
+                  <div className="mt-3 p-3 border border-border rounded-xl flex justify-center bg-muted/40">
                     <img
                       src={logoUrl}
                       alt="Logo preview"
@@ -564,13 +575,13 @@ export function SettingsDialog() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
               <div>
-                <Label htmlFor="app-title" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Título de la App</Label>
+                <Label htmlFor="app-title" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Título de la App</Label>
                 <Input
                   id="app-title"
                   placeholder="Buscador de Archivos"
                   value={appTitle}
                   onChange={(e) => setAppTitle(e.target.value)}
-                  className="w-full px-4 py-3 h-12 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                  className="w-full px-4 py-3 h-12 bg-background border border-border rounded-xl"
                 />
                 <div className="flex items-center gap-2">
                   <Checkbox
@@ -578,17 +589,17 @@ export function SettingsDialog() {
                     checked={showAppTitle}
                     onCheckedChange={(checked) => setShowAppTitle(checked as boolean)}
                   />
-                  <Label htmlFor="show-title" className="text-xs font-normal cursor-pointer text-slate-500">Mostrar</Label>
+                  <Label htmlFor="show-title" className="text-xs font-normal cursor-pointer text-muted-foreground">Mostrar</Label>
                 </div>
               </div>
               <div>
-                <Label htmlFor="app-subtitle" className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Subtítulo</Label>
+                <Label htmlFor="app-subtitle" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Subtítulo</Label>
                 <Input
                   id="app-subtitle"
                   placeholder="Encuentra tus archivos locales al instante"
                   value={appSubtitle}
                   onChange={(e) => setAppSubtitle(e.target.value)}
-                  className="w-full px-4 py-3 h-12 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                  className="w-full px-4 py-3 h-12 bg-background border border-border rounded-xl"
                 />
                 <div className="flex items-center gap-2">
                   <Checkbox
@@ -596,7 +607,7 @@ export function SettingsDialog() {
                     checked={showAppSubtitle}
                     onCheckedChange={(checked) => setShowAppSubtitle(checked as boolean)}
                   />
-                  <Label htmlFor="show-subtitle" className="text-xs font-normal cursor-pointer text-slate-500">Mostrar</Label>
+                  <Label htmlFor="show-subtitle" className="text-xs font-normal cursor-pointer text-muted-foreground">Mostrar</Label>
                 </div>
               </div>
             </div>
@@ -606,11 +617,11 @@ export function SettingsDialog() {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-xl font-bold mb-1">Rutas de Indexación</h2>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Añade directorios para escanear archivos y crear el índice por sección.</p>
+                <p className="text-sm text-muted-foreground">Añade directorios para escanear archivos y crear el índice por sección.</p>
               </div>
               <Button
                 onClick={handleAddPath}
-                className="bg-cyan-500 hover:bg-cyan-500/90 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all shadow-lg shadow-cyan-500/20"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all shadow-lg shadow-primary/20"
               >
                 <Plus className="h-4 w-4" />
                 Añadir Ruta
@@ -622,7 +633,7 @@ export function SettingsDialog() {
               <select
                 value={activeIndexSection?.id || ""}
                 onChange={(e) => setIndexSectionId(e.target.value)}
-                className="w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+                className="w-full h-10 rounded-xl border border-border bg-background px-3 py-2 text-sm"
               >
                 {sections.map((section) => (
                   <option key={section.id} value={section.id}>
@@ -638,7 +649,7 @@ export function SettingsDialog() {
                 <select
                   value={duplicateFromSectionId}
                   onChange={(e) => setDuplicateFromSectionId(e.target.value)}
-                  className="w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+                  className="w-full h-10 rounded-xl border border-border bg-background px-3 py-2 text-sm"
                 >
                   <option value="">Selecciona una sección</option>
                   {sections
@@ -661,7 +672,7 @@ export function SettingsDialog() {
                 value={newPath}
                 onChange={(e) => setNewPath(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleAddPath()}
-                className="flex-1 h-11 rounded-xl bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700"
+                className="flex-1 h-11 rounded-xl bg-background border-border"
               />
               <Button onClick={handleAddPath} size="sm" className="gap-2 rounded-lg">
                 <Plus className="h-4 w-4" />
@@ -669,29 +680,29 @@ export function SettingsDialog() {
               </Button>
             </div>
 
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden divide-y divide-slate-200 dark:divide-slate-700 max-h-64 overflow-y-auto">
+            <div className="bg-card/80 border border-border rounded-2xl overflow-hidden divide-y divide-border max-h-64 overflow-y-auto">
               {activeIndexPaths.length === 0 ? (
                 <div className="p-4 text-center">
-                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                  <p className="text-sm text-muted-foreground">
                     Aún no hay rutas añadidas
                   </p>
                 </div>
               ) : (
                 activeIndexPaths.map((path, index) => (
-                  <div key={path} className="flex items-center justify-between p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                  <div key={path} className="flex items-center justify-between p-4 hover:bg-accent/20 transition-colors">
                     <div className="flex items-center gap-4 min-w-0">
-                      <div className={`p-2 rounded-lg ${index % 2 === 0 ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600'}`}>
+                      <div className={`p-2 rounded-lg ${index % 2 === 0 ? 'bg-accent/20 text-accent' : 'bg-primary/20 text-primary'}`}>
                         <FolderOpen className="h-4 w-4" />
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-semibold truncate">{path}</p>
-                        <p className="text-xs text-slate-400">Sección: {activeIndexSection?.label || "N/A"}</p>
+                        <p className="text-xs text-muted-foreground">Sección: {activeIndexSection?.label || "N/A"}</p>
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => handleRemovePath(path)}
-                      className="text-slate-400 hover:text-red-500 transition-colors"
+                      className="text-muted-foreground hover:text-destructive transition-colors"
                       title="Eliminar ruta"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -704,21 +715,21 @@ export function SettingsDialog() {
 
           <section id="secciones" className="max-w-4xl">
             <h2 className="text-xl font-bold mb-1">Secciones Personalizadas</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Organiza tus reportes y búsquedas en categorías lógicas.</p>
+            <p className="text-sm text-muted-foreground mb-6">Organiza tus reportes y búsquedas en categorías lógicas.</p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
               {sections.map((section) => (
-                <div key={section.id} className="p-5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-2xl flex flex-col justify-between group hover:border-cyan-500 transition-all">
+                <div key={section.id} className="p-5 border border-border bg-card/80 rounded-2xl flex flex-col justify-between group hover:border-primary transition-all">
                   <div className="flex justify-between items-start mb-4">
-                    <div className="w-10 h-10 bg-cyan-500/10 text-cyan-500 rounded-xl flex items-center justify-center">
+                    <div className="w-10 h-10 bg-primary/10 text-primary rounded-xl flex items-center justify-center">
                       <LayoutGrid className="h-5 w-5" />
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-400" type="button" title="Editar">
+                      <button className="p-1.5 hover:bg-accent/20 rounded-lg text-muted-foreground" type="button" title="Editar">
                         <Settings className="h-4 w-4" />
                       </button>
                       <button
-                        className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg text-slate-400 hover:text-red-500"
+                        className="p-1.5 hover:bg-destructive/10 rounded-lg text-muted-foreground hover:text-destructive"
                         type="button"
                         title="Eliminar"
                         onClick={() => handleRemoveSection(section.id)}
@@ -728,19 +739,19 @@ export function SettingsDialog() {
                     </div>
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-900 dark:text-white">{section.label}</h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">{section.description || "Sin descripción"}</p>
-                    <p className="text-[11px] text-slate-400 mt-1">ID: {section.id}</p>
+                    <h3 className="font-bold text-foreground">{section.label}</h3>
+                    <p className="text-xs text-muted-foreground">{section.description || "Sin descripción"}</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">ID: {section.id}</p>
                   </div>
                 </div>
               ))}
-              <button className="p-5 border-2 border-dashed border-slate-200 dark:border-slate-700 hover:border-cyan-500/50 transition-colors rounded-2xl flex flex-col items-center justify-center gap-2 group min-h-[140px]" type="button">
-                <Plus className="h-5 w-5 text-slate-300 dark:text-slate-600 group-hover:text-cyan-500 transition-colors" />
-                <span className="text-sm font-medium text-slate-400 group-hover:text-slate-200">Nueva Sección</span>
+              <button className="p-5 border-2 border-dashed border-border hover:border-primary/60 transition-colors rounded-2xl flex flex-col items-center justify-center gap-2 group min-h-[140px]" type="button">
+                <Plus className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground">Nueva Sección</span>
               </button>
             </div>
 
-            <div className="grid gap-2 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/80 p-4">
+            <div className="grid gap-2 rounded-2xl border border-border bg-card/80 p-4">
               <Input
                 placeholder="ID (ej: libros, curriculum)"
                 value={newSectionId}
@@ -765,7 +776,7 @@ export function SettingsDialog() {
 
           <section id="extensiones" className="max-w-4xl">
             <h2 className="text-xl font-bold mb-1">Extensiones de Archivos</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">Selecciona los tipos de archivos que FileFinder debe indexar.</p>
+            <p className="text-sm text-muted-foreground mb-6">Selecciona los tipos de archivos que FileFinder debe indexar.</p>
 
             <div className="flex gap-2">
               <Input
@@ -785,7 +796,7 @@ export function SettingsDialog() {
               {fileExtensions.map((ext) => (
                 <div
                   key={ext}
-                  className="px-3 py-1.5 bg-cyan-500 text-white text-xs font-bold rounded-lg flex items-center gap-2 shadow-lg shadow-cyan-500/20"
+                  className="px-3 py-1.5 bg-primary text-primary-foreground text-xs font-bold rounded-lg flex items-center gap-2 shadow-lg shadow-primary/20"
                 >
                   .{ext.toUpperCase()}
                   <button
@@ -803,7 +814,7 @@ export function SettingsDialog() {
                   key={ext}
                   type="button"
                   onClick={() => handleAddExtension(ext)}
-                  className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold rounded-lg flex items-center gap-2 hover:border-cyan-500 transition-colors"
+                  className="px-3 py-1.5 bg-muted border border-border text-muted-foreground text-xs font-bold rounded-lg flex items-center gap-2 hover:border-primary transition-colors"
                 >
                   .{ext.toUpperCase()}
                   <Plus className="h-3 w-3" />
@@ -813,11 +824,11 @@ export function SettingsDialog() {
           </section>
         </div>
 
-            <footer className="p-6 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-t border-slate-200 dark:border-slate-800 flex justify-between items-center z-20">
+            <footer className="p-6 bg-card/80 backdrop-blur-xl border-t border-border flex justify-between items-center z-20">
               <Button
                 variant="ghost"
                 onClick={handleReset}
-                className="px-6 py-2.5 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium transition-colors flex items-center gap-2"
+                className="px-6 py-2.5 text-muted-foreground hover:text-foreground font-medium transition-colors flex items-center gap-2"
               >
                 <RotateCcw className="h-4 w-4" />
                 Reiniciar Valores
@@ -827,12 +838,12 @@ export function SettingsDialog() {
                   variant="outline"
                   onClick={handleSyncDocuments}
                   disabled={isSyncing || activeIndexPaths.length === 0}
-                  className="px-6 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl font-semibold transition-all flex items-center gap-2 text-slate-900 dark:text-white"
+                  className="px-6 py-2.5 bg-muted hover:bg-muted/80 rounded-xl font-semibold transition-all flex items-center gap-2 text-foreground"
                 >
                   <Zap className="h-4 w-4" />
                   {isSyncing ? 'Sincronizando...' : 'Sincronizar'}
                 </Button>
-                <Button onClick={handleSave} className="px-10 py-2.5 bg-cyan-500 hover:bg-cyan-500/90 text-white rounded-xl font-bold shadow-xl shadow-cyan-500/25 transition-all flex items-center gap-2">
+                <Button onClick={handleSave} className="px-10 py-2.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl font-bold shadow-xl shadow-primary/25 transition-all flex items-center gap-2">
                   <Save className="h-4 w-4" />
                   Guardar Cambios
                 </Button>

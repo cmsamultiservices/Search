@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { Home, FileText } from "lucide-react";
-import { SettingsDialog } from "@/components/settings-dialog";
+import { Home, FileText, Search, Timer } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { AuthControls } from "@/components/auth-controls";
 
 export function Header() {
   const pathname = usePathname();
 
   const navLinks = [
     { href: "/", label: "Inicio", icon: Home },
+    { href: "/search", label: "Buscar", icon: Search },
+    { href: "/cronometer", label: "Cronometro", icon: Timer },
     { href: "/documents", label: "Documentos", icon: FileText },
   ];
 
@@ -43,7 +45,7 @@ export function Header() {
 
           {/* Configuración - lado derecho */}
           <div className="flex items-center">
-            <SettingsDialog />
+            <AuthControls />
           </div>
         </div>
       </div>

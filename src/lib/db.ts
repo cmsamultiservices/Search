@@ -89,6 +89,23 @@ type SearchStat = {
   lastSearched: number;
 };
 
+type ListDocumentsPageOptions = {
+  sectionIdRaw?: string | null;
+  query?: string | null;
+  extensions?: string[] | null;
+  page?: number | null;
+  pageSize?: number | null;
+};
+
+type ListDocumentsPageResult = {
+  sectionId: string;
+  documents: StoredDocument[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 type ReplaceDocumentsInput = {
   nombre: string;
   ruta: string;
@@ -203,6 +220,44 @@ function normalizeDocumentIdInput(documentId: unknown): string | null {
   }
 
   return null;
+}
+
+function escapeLikeValue(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+function normalizeExtensionsInput(raw: string[] | null | undefined) {
+  if (!Array.isArray(raw)) return [];
+
+  const normalized = raw
+    .filter((item) => typeof item === "string")
+    .map((item) => item.toLowerCase().trim().replace(/^\./, ""))
+    .filter((item) => /^[a-z0-9]+$/.test(item));
+
+  return Array.from(new Set(normalized));
+}
+
+function toSafePositiveInt(value: number | null | undefined, fallback: number, max: number) {
+  if (!Number.isFinite(value)) return fallback;
+  const floored = Math.floor(value as number);
+  if (floored <= 0) return fallback;
+  return Math.min(floored, max);
+}
+
+function toSafeCount(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.floor(value));
+  if (typeof value === "bigint") {
+    const asNumber = Number(value.toString());
+    if (Number.isFinite(asNumber)) {
+      return Math.max(0, Math.floor(asNumber));
+    }
+    return 0;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.max(0, Math.floor(parsed));
+  }
+  return 0;
 }
 
 function saveSettingsInternal(db: SQLiteDatabase, settings: Settings) {
@@ -628,6 +683,73 @@ export function listDocuments(sectionIdRaw?: string | null) {
   }
 
   return rows.map(mapDocumentRow);
+}
+
+export function listDocumentsPage(options: ListDocumentsPageOptions): ListDocumentsPageResult {
+  const db = getDb();
+  const sectionId = normalizeSectionId(options.sectionIdRaw);
+  const query = typeof options.query === "string" ? options.query.trim().toLowerCase() : "";
+  const extensions = normalizeExtensionsInput(options.extensions);
+  const pageSize = toSafePositiveInt(options.pageSize, 20, 500);
+  const requestedPage = toSafePositiveInt(options.page, 1, 100000);
+
+  const whereClauses = ["d.section_id = ?"];
+  const params: unknown[] = [sectionId];
+
+  if (query) {
+    const escaped = `%${escapeLikeValue(query)}%`;
+    whereClauses.push("(LOWER(d.nombre) LIKE ? ESCAPE '\\' OR LOWER(d.ruta) LIKE ? ESCAPE '\\')");
+    params.push(escaped, escaped);
+  }
+
+  if (extensions.length > 0) {
+    const placeholders = extensions.map(() => "?").join(", ");
+    whereClauses.push(
+      `CASE
+         WHEN instr(d.nombre, '.') > 0 THEN lower(substr(d.nombre, instr(d.nombre, '.') + 1))
+         ELSE ''
+       END IN (${placeholders})`
+    );
+    params.push(...extensions);
+  }
+
+  const whereSql = `WHERE ${whereClauses.join(" AND ")}`;
+
+  const countRow = db
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM documents d
+       ${whereSql}`
+    )
+    .get(...params);
+
+  const total = toSafeCount(countRow?.total);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const offset = (page - 1) * pageSize;
+
+  const rows = db
+    .prepare(
+      `SELECT d.section_id, d.id, d.nombre, d.ruta, m.metadata_json
+       FROM documents d
+       LEFT JOIN document_metadata m
+         ON m.section_id = d.section_id
+        AND m.document_id = d.id
+       ${whereSql}
+       ORDER BY d.nombre COLLATE NOCASE ASC
+       LIMIT ?
+       OFFSET ?`
+    )
+    .all(...params, pageSize, offset);
+
+  return {
+    sectionId,
+    documents: rows.map(mapDocumentRow),
+    total,
+    page,
+    pageSize,
+    totalPages,
+  };
 }
 
 export function getDocument(sectionIdRaw: string | null | undefined, documentIdRaw: unknown) {
