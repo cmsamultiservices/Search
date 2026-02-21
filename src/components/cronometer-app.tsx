@@ -1,6 +1,13 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { authClient } from "@/lib/auth/client";
 
 type TimerSession = {
   id: string;
@@ -17,7 +24,15 @@ type StoredTimerState = {
   sessionStartTime: string | null;
 };
 
-type TimerUser = {
+type TimerData = {
+  settings: {
+    pricePerHour: number;
+  };
+  currentTimerState: StoredTimerState;
+  history: TimerSession[];
+};
+
+type LegacyTimerUser = {
   username: string;
   password: string;
   settings: {
@@ -27,14 +42,15 @@ type TimerUser = {
   history: TimerSession[];
 };
 
-type AppData = {
-  users: TimerUser[];
+type LegacyAppData = {
+  users: LegacyTimerUser[];
   currentUser: string | null;
 };
 
-type ViewMode = "login" | "register" | "timer" | "config" | "history";
+type ViewMode = "timer" | "config" | "history";
 
-const STORAGE_KEY = "costTimerAppData";
+const STORAGE_PREFIX = "costTimerAppDataByUser";
+const LEGACY_STORAGE_KEY = "costTimerAppData";
 const DEFAULT_PRICE_PER_HOUR = 100;
 
 const DEFAULT_TIMER_STATE: StoredTimerState = {
@@ -44,14 +60,22 @@ const DEFAULT_TIMER_STATE: StoredTimerState = {
   sessionStartTime: null,
 };
 
-const DEFAULT_APP_DATA: AppData = {
-  users: [],
-  currentUser: null,
+const DEFAULT_TIMER_DATA: TimerData = {
+  settings: {
+    pricePerHour: DEFAULT_PRICE_PER_HOUR,
+  },
+  currentTimerState: DEFAULT_TIMER_STATE,
+  history: [],
 };
 
 function asFiniteNumber(value: unknown, fallback: number): number {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  return value as Record<string, unknown>;
 }
 
 function asTimestamp(value: unknown): number | null {
@@ -64,7 +88,7 @@ function toStoredTimerState(
   elapsedTime: number,
   isRunning: boolean,
   startMs: number | null,
-  sessionStartMs: number | null
+  sessionStartMs: number | null,
 ): StoredTimerState {
   return {
     elapsedTime: Math.max(0, Math.floor(elapsedTime)),
@@ -74,70 +98,147 @@ function toStoredTimerState(
   };
 }
 
-function normalizeAppData(raw: unknown): AppData {
-  if (!raw || typeof raw !== "object") return DEFAULT_APP_DATA;
-  const maybe = raw as Partial<AppData>;
-  const users = Array.isArray(maybe.users) ? maybe.users : [];
+function normalizeTimerData(raw: unknown): TimerData {
+  if (!raw || typeof raw !== "object") return DEFAULT_TIMER_DATA;
+  const maybe = raw as Partial<TimerData>;
+  const rawTimer =
+    maybe.currentTimerState && typeof maybe.currentTimerState === "object"
+      ? maybe.currentTimerState
+      : DEFAULT_TIMER_STATE;
 
-  const normalizedUsers: TimerUser[] = users
+  const normalizedTimer: StoredTimerState = {
+    elapsedTime: Math.max(0, Math.floor(asFiniteNumber(rawTimer.elapsedTime, 0))),
+    isRunning: Boolean(rawTimer.isRunning) && Boolean(rawTimer.startTime),
+    startTime: typeof rawTimer.startTime === "string" ? rawTimer.startTime : null,
+    sessionStartTime:
+      typeof rawTimer.sessionStartTime === "string" ? rawTimer.sessionStartTime : null,
+  };
+
+  const rawHistory = Array.isArray(maybe.history) ? maybe.history : [];
+  const history: TimerSession[] = rawHistory
     .map((entry) => {
       if (!entry || typeof entry !== "object") return null;
-      const user = entry as Partial<TimerUser>;
+      const session = entry as Partial<TimerSession>;
+      const start = typeof session.startTime === "string" ? session.startTime : null;
+      const end = typeof session.endTime === "string" ? session.endTime : null;
+      if (!start || !end) return null;
+      return {
+        id:
+          typeof session.id === "string" && session.id.trim()
+            ? session.id
+            : `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        startTime: start,
+        endTime: end,
+        duration: Math.max(0, asFiniteNumber(session.duration, 0)),
+        cost: Math.max(0, asFiniteNumber(session.cost, 0)),
+      };
+    })
+    .filter((value): value is TimerSession => value !== null);
+
+  return {
+    settings: {
+      pricePerHour: Math.max(
+        0,
+        asFiniteNumber(maybe.settings?.pricePerHour, DEFAULT_PRICE_PER_HOUR),
+      ),
+    },
+    currentTimerState: normalizedTimer,
+    history,
+  };
+}
+
+function normalizeLegacyAppData(raw: unknown): LegacyAppData {
+  if (!raw || typeof raw !== "object") return { users: [], currentUser: null };
+  const maybe = raw as Partial<LegacyAppData>;
+  const users = Array.isArray(maybe.users) ? maybe.users : [];
+
+  const normalizedUsers: LegacyTimerUser[] = users
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const user = entry as Partial<LegacyTimerUser>;
       if (typeof user.username !== "string" || !user.username.trim()) return null;
 
-      const rawTimer = user.currentTimerState && typeof user.currentTimerState === "object"
-        ? user.currentTimerState
-        : DEFAULT_TIMER_STATE;
-
-      const normalizedTimer: StoredTimerState = {
-        elapsedTime: Math.max(0, Math.floor(asFiniteNumber(rawTimer.elapsedTime, 0))),
-        isRunning: Boolean(rawTimer.isRunning) && Boolean(rawTimer.startTime),
-        startTime: typeof rawTimer.startTime === "string" ? rawTimer.startTime : null,
-        sessionStartTime: typeof rawTimer.sessionStartTime === "string" ? rawTimer.sessionStartTime : null,
-      };
-
-      const rawHistory = Array.isArray(user.history) ? user.history : [];
-      const history: TimerSession[] = rawHistory
-        .map((session) => {
-          if (!session || typeof session !== "object") return null;
-          const s = session as Partial<TimerSession>;
-          const start = typeof s.startTime === "string" ? s.startTime : null;
-          const end = typeof s.endTime === "string" ? s.endTime : null;
-          if (!start || !end) return null;
-          return {
-            id: typeof s.id === "string" && s.id.trim() ? s.id : `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-            startTime: start,
-            endTime: end,
-            duration: Math.max(0, asFiniteNumber(s.duration, 0)),
-            cost: Math.max(0, asFiniteNumber(s.cost, 0)),
-          };
-        })
-        .filter((value): value is TimerSession => value !== null);
+      const normalized = normalizeTimerData({
+        settings: user.settings,
+        currentTimerState: user.currentTimerState,
+        history: user.history,
+      });
 
       return {
         username: user.username.trim(),
         password: typeof user.password === "string" ? user.password : "",
-        settings: {
-          pricePerHour: Math.max(0, asFiniteNumber(user.settings?.pricePerHour, DEFAULT_PRICE_PER_HOUR)),
-        },
-        currentTimerState: normalizedTimer,
-        history,
+        settings: normalized.settings,
+        currentTimerState: normalized.currentTimerState,
+        history: normalized.history,
       };
     })
-    .filter((value): value is TimerUser => value !== null);
+    .filter((value): value is LegacyTimerUser => value !== null);
 
   const currentUser =
-    typeof maybe.currentUser === "string" && maybe.currentUser.trim()
-      ? maybe.currentUser.trim()
-      : null;
+    typeof maybe.currentUser === "string" && maybe.currentUser.trim() ? maybe.currentUser.trim() : null;
 
   return {
-    users: normalizedUsers,
+    users: normalizedUsers.sort((a, b) => {
+      if (a.username === currentUser) return -1;
+      if (b.username === currentUser) return 1;
+      return 0;
+    }),
     currentUser:
       currentUser && normalizedUsers.some((user) => user.username === currentUser)
         ? currentUser
         : null,
   };
+}
+
+function buildUserKey(user: unknown): string | null {
+  const record = asRecord(user);
+  if (!record) return null;
+
+  const id = typeof record.id === "string" ? record.id.trim() : "";
+  if (id) return id;
+
+  const email = typeof record.email === "string" ? record.email.trim().toLowerCase() : "";
+  if (email) return email;
+
+  const name = typeof record.name === "string" ? record.name.trim().toLowerCase() : "";
+  if (name) return name;
+
+  return null;
+}
+
+function buildDisplayName(user: unknown, fallback: string): string {
+  const record = asRecord(user);
+  if (!record) return fallback;
+
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  if (name) return name;
+
+  const email = typeof record.email === "string" ? record.email.trim() : "";
+  if (email) return email;
+
+  return fallback;
+}
+
+function getStorageKey(userKey: string): string {
+  return `${STORAGE_PREFIX}:${userKey}`;
+}
+
+function migrateLegacyTimerData(raw: unknown): TimerData | null {
+  const legacyData = normalizeLegacyAppData(raw);
+  if (legacyData.users.length === 0) return null;
+
+  const preferred =
+    (legacyData.currentUser
+      ? legacyData.users.find((user) => user.username === legacyData.currentUser)
+      : undefined) ?? legacyData.users[0];
+
+  if (!preferred) return null;
+
+  return normalizeTimerData({
+    settings: preferred.settings,
+    currentTimerState: preferred.currentTimerState,
+    history: preferred.history,
+  });
 }
 
 function formatTimer(ms: number): string {
@@ -156,18 +257,16 @@ function formatDate(iso: string): string {
 }
 
 export function CronometerApp() {
+  const router = useRouter();
+  const { data: sessionData, isPending: isSessionPending } = authClient.useSession();
+  const authUser = sessionData?.user ?? null;
+  const userKey = useMemo(() => buildUserKey(authUser), [authUser]);
+  const displayName = useMemo(() => buildDisplayName(authUser, "Usuario"), [authUser]);
+  const storageKey = useMemo(() => (userKey ? getStorageKey(userKey) : null), [userKey]);
+
   const [ready, setReady] = useState(false);
-  const [view, setView] = useState<ViewMode>("login");
-  const [appData, setAppData] = useState<AppData>(DEFAULT_APP_DATA);
-
-  const [loginUsername, setLoginUsername] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-
-  const [registerUsername, setRegisterUsername] = useState("");
-  const [registerPassword, setRegisterPassword] = useState("");
-  const [registerError, setRegisterError] = useState("");
-  const [registerSuccess, setRegisterSuccess] = useState("");
+  const [view, setView] = useState<ViewMode>("timer");
+  const [timerData, setTimerData] = useState<TimerData>(DEFAULT_TIMER_DATA);
 
   const [elapsedTime, setElapsedTime] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
@@ -177,100 +276,106 @@ export function CronometerApp() {
   const [pricePerHourInput, setPricePerHourInput] = useState(String(DEFAULT_PRICE_PER_HOUR));
   const [configError, setConfigError] = useState("");
 
-  const currentUser = useMemo(() => {
-    if (!appData.currentUser) return null;
-    return appData.users.find((user) => user.username === appData.currentUser) ?? null;
-  }, [appData.currentUser, appData.users]);
-
   const history = useMemo(() => {
-    if (!currentUser) return [];
-    return [...currentUser.history].sort((a, b) => {
+    return [...timerData.history].sort((a, b) => {
       const aTs = Date.parse(a.startTime);
       const bTs = Date.parse(b.startTime);
       return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
     });
-  }, [currentUser]);
+  }, [timerData.history]);
 
-  const pricePerHour = currentUser?.settings.pricePerHour ?? DEFAULT_PRICE_PER_HOUR;
+  const pricePerHour = timerData.settings.pricePerHour;
   const currentCost = (elapsedTime / 3600000) * pricePerHour;
 
-  const updateAppData = useCallback((updater: (prev: AppData) => AppData) => {
-    setAppData((prev) => {
-      const next = updater(prev);
-      if (typeof window !== "undefined") {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      }
-      return next;
-    });
-  }, []);
-
-  const persistTimerState = useCallback(
-    (nextElapsed: number, nextRunning: boolean, nextStartMs: number | null, nextSessionStartMs: number | null) => {
-      if (!appData.currentUser) return;
-      const activeUsername = appData.currentUser;
-      const nextTimerState = toStoredTimerState(nextElapsed, nextRunning, nextStartMs, nextSessionStartMs);
-
-      updateAppData((prev) => ({
-        ...prev,
-        users: prev.users.map((user) =>
-          user.username === activeUsername ? { ...user, currentTimerState: nextTimerState } : user
-        ),
-      }));
-    },
-    [appData.currentUser, updateAppData]
-  );
-
-  useEffect(() => {
-    try {
-      if (typeof window !== "undefined") {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          setAppData(normalizeAppData(parsed));
-        }
-      }
-    } catch {
-      setAppData(DEFAULT_APP_DATA);
-    } finally {
-      setReady(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!ready) return;
-
-    if (!appData.currentUser) {
-      if (view !== "register") {
-        setView("login");
-      }
-      setElapsedTime(0);
-      setIsRunning(false);
-      setTimerStartMs(null);
-      setSessionStartMs(null);
-      setPricePerHourInput(String(DEFAULT_PRICE_PER_HOUR));
-      return;
-    }
-
-    const active = appData.users.find((user) => user.username === appData.currentUser);
-    if (!active) {
-      updateAppData((prev) => ({ ...prev, currentUser: null }));
-      return;
-    }
-
-    const nextElapsed = Math.max(0, active.currentTimerState.elapsedTime);
-    const parsedStart = asTimestamp(active.currentTimerState.startTime);
-    const parsedSession = asTimestamp(active.currentTimerState.sessionStartTime);
+  const applyTimerSnapshot = useCallback((data: TimerData) => {
+    const nextElapsed = Math.max(0, data.currentTimerState.elapsedTime);
+    const parsedStart = asTimestamp(data.currentTimerState.startTime);
+    const parsedSession = asTimestamp(data.currentTimerState.sessionStartTime);
 
     setElapsedTime(nextElapsed);
     setTimerStartMs(parsedStart);
     setSessionStartMs(parsedSession);
-    setIsRunning(Boolean(active.currentTimerState.isRunning && parsedStart !== null));
-    setPricePerHourInput(String(active.settings.pricePerHour));
-    setView("timer");
-    setLoginError("");
-    setRegisterError("");
-    setRegisterSuccess("");
-  }, [ready, appData.currentUser, updateAppData, view]);
+    setIsRunning(Boolean(data.currentTimerState.isRunning && parsedStart !== null));
+    setPricePerHourInput(String(data.settings.pricePerHour));
+  }, []);
+
+  const updateTimerData = useCallback(
+    (updater: (prev: TimerData) => TimerData) => {
+      setTimerData((prev) => {
+        const next = normalizeTimerData(updater(prev));
+        if (typeof window !== "undefined" && storageKey) {
+          localStorage.setItem(storageKey, JSON.stringify(next));
+        }
+        return next;
+      });
+    },
+    [storageKey],
+  );
+
+  const persistTimerState = useCallback(
+    (
+      nextElapsed: number,
+      nextRunning: boolean,
+      nextStartMs: number | null,
+      nextSessionStartMs: number | null,
+    ) => {
+      updateTimerData((prev) => ({
+        ...prev,
+        currentTimerState: toStoredTimerState(
+          nextElapsed,
+          nextRunning,
+          nextStartMs,
+          nextSessionStartMs,
+        ),
+      }));
+    },
+    [updateTimerData],
+  );
+
+  useEffect(() => {
+    if (isSessionPending) return;
+    if (typeof window === "undefined") return;
+
+    if (!storageKey) {
+      setTimerData(DEFAULT_TIMER_DATA);
+      applyTimerSnapshot(DEFAULT_TIMER_DATA);
+      setReady(true);
+      return;
+    }
+
+    setReady(false);
+
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const normalized = normalizeTimerData(parsed);
+        setTimerData(normalized);
+        applyTimerSnapshot(normalized);
+      } else {
+        let seedData = DEFAULT_TIMER_DATA;
+
+        const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY);
+        if (legacyRaw) {
+          const migrated = migrateLegacyTimerData(JSON.parse(legacyRaw));
+          if (migrated) {
+            seedData = migrated;
+          }
+        }
+
+        localStorage.setItem(storageKey, JSON.stringify(seedData));
+        setTimerData(seedData);
+        applyTimerSnapshot(seedData);
+      }
+    } catch {
+      setTimerData(DEFAULT_TIMER_DATA);
+      applyTimerSnapshot(DEFAULT_TIMER_DATA);
+    } finally {
+      setView("timer");
+      setConfigError("");
+      setReady(true);
+    }
+  }, [applyTimerSnapshot, isSessionPending, storageKey]);
 
   useEffect(() => {
     if (!isRunning || timerStartMs === null) return;
@@ -284,57 +389,14 @@ export function CronometerApp() {
     return () => window.clearInterval(intervalId);
   }, [isRunning, timerStartMs]);
 
-  const handleLogin = (event: FormEvent) => {
-    event.preventDefault();
-    const username = loginUsername.trim();
-    const password = loginPassword;
-    const user = appData.users.find((entry) => entry.username === username);
-
-    if (!user || user.password !== password) {
-      setLoginError("Usuario o contrasena incorrectos.");
-      return;
-    }
-
-    updateAppData((prev) => ({ ...prev, currentUser: username }));
-    setLoginUsername("");
-    setLoginPassword("");
-    setLoginError("");
-  };
-
-  const handleRegister = (event: FormEvent) => {
-    event.preventDefault();
-    const username = registerUsername.trim();
-    const password = registerPassword;
-
-    if (!username || !password) {
-      setRegisterError("Debes completar usuario y contrasena.");
-      setRegisterSuccess("");
-      return;
-    }
-
-    if (appData.users.some((user) => user.username === username)) {
-      setRegisterError("El usuario ya existe.");
-      setRegisterSuccess("");
-      return;
-    }
-
-    const newUser: TimerUser = {
-      username,
-      password,
-      settings: { pricePerHour: DEFAULT_PRICE_PER_HOUR },
-      currentTimerState: DEFAULT_TIMER_STATE,
-      history: [],
-    };
-
-    updateAppData((prev) => ({ ...prev, users: [...prev.users, newUser] }));
-    setRegisterUsername("");
-    setRegisterPassword("");
-    setRegisterError("");
-    setRegisterSuccess("Usuario creado. Ahora puedes iniciar sesion.");
-  };
+  useEffect(() => {
+    if (isSessionPending) return;
+    if (authUser && storageKey) return;
+    router.replace("/login?next=%2Fcronometer");
+  }, [authUser, isSessionPending, router, storageKey]);
 
   const handleStart = () => {
-    if (!currentUser || isRunning) return;
+    if (isRunning) return;
     const now = Date.now();
     const safeElapsed = Math.max(0, elapsedTime);
     const nextSessionStart = safeElapsed === 0 ? now : sessionStartMs ?? now - safeElapsed;
@@ -357,41 +419,29 @@ export function CronometerApp() {
   };
 
   const handleStop = () => {
-    if (!currentUser) return;
     const now = Date.now();
-    const finalElapsed = isRunning && timerStartMs !== null ? Math.max(0, Date.now() - timerStartMs) : elapsedTime;
+    const finalElapsed =
+      isRunning && timerStartMs !== null ? Math.max(0, Date.now() - timerStartMs) : elapsedTime;
     const finalCost = (finalElapsed / 3600000) * pricePerHour;
     const safeStart = sessionStartMs ?? now - finalElapsed;
-    const nextTimerState = DEFAULT_TIMER_STATE;
 
-    updateAppData((prev) => {
-      const activeUsername = prev.currentUser;
-      if (!activeUsername) return prev;
-
+    updateTimerData((prev) => {
       return {
         ...prev,
-        users: prev.users.map((user) => {
-          if (user.username !== activeUsername) return user;
-          const nextHistory =
-            finalElapsed > 0
-              ? [
-                  {
-                    id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-                    startTime: new Date(safeStart).toISOString(),
-                    endTime: new Date(now).toISOString(),
-                    duration: finalElapsed,
-                    cost: finalCost,
-                  },
-                  ...user.history,
-                ]
-              : user.history;
-
-          return {
-            ...user,
-            history: nextHistory,
-            currentTimerState: nextTimerState,
-          };
-        }),
+        history:
+          finalElapsed > 0
+            ? [
+                {
+                  id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+                  startTime: new Date(safeStart).toISOString(),
+                  endTime: new Date(now).toISOString(),
+                  duration: finalElapsed,
+                  cost: finalCost,
+                },
+                ...prev.history,
+              ]
+            : prev.history,
+        currentTimerState: DEFAULT_TIMER_STATE,
       };
     });
 
@@ -403,7 +453,6 @@ export function CronometerApp() {
 
   const handleSaveConfig = (event: FormEvent) => {
     event.preventDefault();
-    if (!currentUser) return;
 
     const parsed = Number(pricePerHourInput);
     if (!Number.isFinite(parsed) || parsed < 0) {
@@ -411,231 +460,123 @@ export function CronometerApp() {
       return;
     }
 
-    updateAppData((prev) => ({
+    updateTimerData((prev) => ({
       ...prev,
-      users: prev.users.map((user) =>
-        user.username === currentUser.username
-          ? { ...user, settings: { ...user.settings, pricePerHour: parsed } }
-          : user
-      ),
+      settings: {
+        ...prev.settings,
+        pricePerHour: parsed,
+      },
     }));
 
     setConfigError("");
     setView("timer");
   };
 
-  const handleLogout = () => {
-    const nextTimerState = DEFAULT_TIMER_STATE;
-
-    updateAppData((prev) => {
-      const activeUsername = prev.currentUser;
-      if (!activeUsername) return prev;
-
-      return {
-        currentUser: null,
-        users: prev.users.map((user) =>
-          user.username === activeUsername ? { ...user, currentTimerState: nextTimerState } : user
-        ),
-      };
-    });
-
-    setElapsedTime(0);
-    setIsRunning(false);
-    setTimerStartMs(null);
-    setSessionStartMs(null);
-    setView("login");
-    setLoginError("");
-    setRegisterError("");
-    setRegisterSuccess("");
-    setConfigError("");
-  };
-
-  if (!ready) {
+  if (isSessionPending || !ready || !authUser || !storageKey) {
     return (
       <section className="container mx-auto px-4 py-8 md:px-6">
-        <div className="mx-auto max-w-2xl rounded-2xl border bg-card/70 p-8 backdrop-blur-sm">
-          <p className="text-sm text-muted-foreground">Cargando cronometro...</p>
-        </div>
+        <Card className="mx-auto max-w-3xl rounded-2xl bg-card/80 p-8 shadow-xl backdrop-blur-sm">
+          <p className="text-sm text-muted-foreground">Redirigiendo...</p>
+        </Card>
       </section>
     );
   }
 
   return (
     <section className="container mx-auto px-4 py-8 md:px-6">
-      <div className="mx-auto w-full max-w-2xl rounded-2xl border bg-card/70 p-6 shadow-xl backdrop-blur-sm md:p-8">
+      <Card className="mx-auto w-full max-w-3xl rounded-2xl bg-card/80 p-6 shadow-xl backdrop-blur-sm md:p-8">
         <h1 className="text-2xl font-bold md:text-3xl">Cronometro con costo</h1>
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <span>
+            Usuario activo: <span className="font-semibold text-foreground">{displayName}</span>
+          </span>
+          <Badge variant={isRunning ? "default" : "secondary"}>{isRunning ? "En curso" : "Pausado"}</Badge>
+          <Badge variant="outline">RD$ {pricePerHour.toFixed(2)}/hora</Badge>
+        </div>
 
-        {!currentUser && view === "login" && (
-          <form className="mt-6 space-y-4" onSubmit={handleLogin}>
-            <h2 className="text-lg font-semibold">Iniciar sesion</h2>
-            <input
-              type="text"
-              placeholder="Usuario"
-              value={loginUsername}
-              onChange={(event) => setLoginUsername(event.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2"
-            />
-            <input
-              type="password"
-              placeholder="Contrasena"
-              value={loginPassword}
-              onChange={(event) => setLoginPassword(event.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2"
-            />
-            {loginError && <p className="text-sm text-destructive">{loginError}</p>}
-            <button type="submit" className="w-full rounded-md bg-primary px-4 py-2 font-semibold text-primary-foreground">
-              Entrar
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setView("register");
-                setLoginError("");
-              }}
-              className="w-full rounded-md border px-4 py-2 font-semibold hover:bg-accent/20"
-            >
-              Registrarse
-            </button>
-          </form>
-        )}
-
-        {!currentUser && view === "register" && (
-          <form className="mt-6 space-y-4" onSubmit={handleRegister}>
-            <h2 className="text-lg font-semibold">Registrar usuario</h2>
-            <input
-              type="text"
-              placeholder="Nuevo usuario"
-              value={registerUsername}
-              onChange={(event) => setRegisterUsername(event.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2"
-            />
-            <input
-              type="password"
-              placeholder="Nueva contrasena"
-              value={registerPassword}
-              onChange={(event) => setRegisterPassword(event.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2"
-            />
-            {registerError && <p className="text-sm text-destructive">{registerError}</p>}
-            {registerSuccess && <p className="text-sm text-emerald-600">{registerSuccess}</p>}
-            <button type="submit" className="w-full rounded-md bg-primary px-4 py-2 font-semibold text-primary-foreground">
-              Crear usuario
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setView("login");
-                setRegisterError("");
-              }}
-              className="w-full rounded-md border px-4 py-2 font-semibold hover:bg-accent/20"
-            >
-              Volver a iniciar sesion
-            </button>
-          </form>
-        )}
-
-        {currentUser && view === "timer" && (
+        {view === "timer" ? (
           <div className="mt-6 space-y-5">
-            <p className="text-sm text-muted-foreground">
-              Usuario activo: <span className="font-semibold text-foreground">{currentUser.username}</span>
-            </p>
             <div className="rounded-xl border bg-background/80 p-5 text-center">
               <p className="text-5xl font-mono font-bold tracking-wide">{formatTimer(elapsedTime)}</p>
               <p className="mt-3 text-xl">
-                Costo: <span className="font-semibold">${currentCost.toFixed(2)}</span>
+                Costo acumulado: <span className="font-semibold">RD$ {currentCost.toFixed(2)}</span>
               </p>
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={handleStart}
-                disabled={isRunning}
-                className="rounded-md bg-emerald-600 px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Inicio
-              </button>
-              <button
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <Button type="button" onClick={handleStart} disabled={isRunning} className="font-semibold">
+                Iniciar
+              </Button>
+              <Button
                 type="button"
                 onClick={handlePause}
                 disabled={!isRunning}
-                className="rounded-md bg-amber-500 px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                variant="secondary"
+                className="font-semibold"
               >
-                Pausa
-              </button>
-              <button
+                Pausar
+              </Button>
+              <Button
                 type="button"
                 onClick={handleStop}
                 disabled={elapsedTime === 0}
-                className="rounded-md bg-red-600 px-4 py-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                variant="destructive"
+                className="font-semibold"
               >
-                Detener
-              </button>
+                Detener y guardar
+              </Button>
             </div>
 
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <button
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => {
                   setPricePerHourInput(String(pricePerHour));
                   setConfigError("");
                   setView("config");
                 }}
-                className="rounded-md border px-4 py-2 font-semibold hover:bg-accent/20"
               >
                 Configuracion
-              </button>
-              <button
-                type="button"
-                onClick={() => setView("history")}
-                className="rounded-md border px-4 py-2 font-semibold hover:bg-accent/20"
-              >
-                Ver historial
-              </button>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="rounded-md border px-4 py-2 font-semibold hover:bg-accent/20"
-              >
-                Cerrar sesion
-              </button>
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setView("history")}>
+                Historial de sesiones
+              </Button>
             </div>
           </div>
-        )}
+        ) : null}
 
-        {currentUser && view === "config" && (
+        {view === "config" ? (
           <form className="mt-6 space-y-4" onSubmit={handleSaveConfig}>
             <h2 className="text-lg font-semibold">Configuracion</h2>
-            <label className="block text-sm font-medium">Precio por hora (pesos)</label>
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              value={pricePerHourInput}
-              onChange={(event) => setPricePerHourInput(event.target.value)}
-              className="w-full rounded-md border bg-background px-3 py-2"
-            />
-            {configError && <p className="text-sm text-destructive">{configError}</p>}
+            <div className="space-y-1.5">
+              <Label htmlFor="price-per-hour">Precio por hora (RD$)</Label>
+              <Input
+                id="price-per-hour"
+                type="number"
+                min={0}
+                step="0.01"
+                value={pricePerHourInput}
+                onChange={(event) => setPricePerHourInput(event.target.value)}
+              />
+            </div>
+            {configError ? <p className="text-sm text-destructive">{configError}</p> : null}
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <button type="submit" className="rounded-md bg-primary px-4 py-2 font-semibold text-primary-foreground">
-                Guardar configuracion
-              </button>
-              <button
-                type="button"
-                onClick={() => setView("timer")}
-                className="rounded-md border px-4 py-2 font-semibold hover:bg-accent/20"
-              >
+              <Button type="submit">Guardar configuracion</Button>
+              <Button type="button" variant="outline" onClick={() => setView("timer")}>
                 Volver al cronometro
-              </button>
+              </Button>
             </div>
           </form>
-        )}
+        ) : null}
 
-        {currentUser && view === "history" && (
+        {view === "history" ? (
           <div className="mt-6 space-y-4">
             <h2 className="text-lg font-semibold">Historial de sesiones</h2>
             <div className="max-h-80 space-y-3 overflow-y-auto rounded-lg border bg-background/80 p-3">
-              {history.length === 0 && <p className="text-sm text-muted-foreground">No hay historial disponible.</p>}
+              {history.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No hay historial disponible.</p>
+              ) : null}
               {history.map((session) => (
                 <div key={session.id} className="rounded-md border bg-card p-3">
                   <p className="text-sm">
@@ -648,21 +589,17 @@ export function CronometerApp() {
                     <span className="font-semibold">Duracion:</span> {formatTimer(session.duration)}
                   </p>
                   <p className="text-sm">
-                    <span className="font-semibold">Costo:</span> ${session.cost.toFixed(2)}
+                    <span className="font-semibold">Costo:</span> RD$ {session.cost.toFixed(2)}
                   </p>
                 </div>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={() => setView("timer")}
-              className="w-full rounded-md border px-4 py-2 font-semibold hover:bg-accent/20"
-            >
+            <Button type="button" variant="outline" className="w-full" onClick={() => setView("timer")}>
               Volver al cronometro
-            </button>
+            </Button>
           </div>
-        )}
-      </div>
+        ) : null}
+      </Card>
     </section>
   );
 }
