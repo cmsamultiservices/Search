@@ -639,6 +639,43 @@ export function saveSettings(rawSettings: unknown) {
   return normalized;
 }
 
+function buildPathLookupCandidates(filePathRaw: string): string[] {
+  const set = new Set<string>();
+
+  const addVariants = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    set.add(trimmed);
+    set.add(trimmed.replace(/\//g, "\\"));
+    set.add(trimmed.replace(/\\/g, "/"));
+  };
+
+  addVariants(filePathRaw);
+
+  try {
+    addVariants(path.resolve(filePathRaw));
+  } catch {
+    // Ignore malformed inputs and keep raw candidates.
+  }
+
+  return Array.from(set);
+}
+
+export function isIndexedDocumentPath(filePathRaw: string) {
+  if (typeof filePathRaw !== "string" || !filePathRaw.trim()) return false;
+
+  const candidates = buildPathLookupCandidates(filePathRaw);
+  if (candidates.length === 0) return false;
+
+  const placeholders = candidates.map(() => "?").join(", ");
+  const db = getDb();
+  const row = db
+    .prepare(`SELECT 1 AS present FROM documents WHERE ruta IN (${placeholders}) LIMIT 1`)
+    .get(...candidates);
+
+  return Boolean(row?.present);
+}
+
 function parseMetadataJson(rawJson: unknown): Record<string, unknown> {
   if (typeof rawJson !== "string" || !rawJson.trim()) return {};
   const parsed = parseJson(rawJson, {} as Record<string, unknown>);
