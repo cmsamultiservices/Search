@@ -1,7 +1,9 @@
 import { ShieldCheck } from "lucide-react";
+import { AdminPermissionsGuide } from "@/components/admin-permissions-guide";
 import { AdminUsersManager } from "@/components/admin-users-manager";
 import { Card } from "@/components/ui/card";
 import {
+  ADMIN_ROLE,
   canAccessGlobalSettings,
   canManageUserPermissions,
   getSessionUser,
@@ -20,6 +22,7 @@ export default async function DashboardPage() {
   const sessionUser = getSessionUser(session);
   const role = getUserRole(sessionUser);
   const grade = getUserGrade(sessionUser);
+  const isAdmin = role === ADMIN_ROLE;
   const hasGlobalSettingsAccess = canAccessGlobalSettings(sessionUser);
   const canManageUsers = canManageUserPermissions(sessionUser);
   const userName =
@@ -60,6 +63,8 @@ export default async function DashboardPage() {
           </div>
         </div>
       </Card>
+
+      {isAdmin ? <AdminPermissionsGuide /> : null}
 
       {canManageUsers ? (
         <AdminUsersManager />
