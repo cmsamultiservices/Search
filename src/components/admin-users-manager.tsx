@@ -6,7 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { USER_ROLES } from "@/lib/auth/permissions";
+import { authClient } from "@/lib/auth/client";
+import {
+  ADMIN_ROLE,
+  USER_ROLES,
+  getUserGrade,
+  getUserRole,
+} from "@/lib/auth/permissions";
 
 type ManagedUser = {
   id: string;
@@ -29,17 +35,43 @@ function coerceGrade(value: unknown) {
   return Math.max(0, Math.min(100, Math.round(num)));
 }
 
+function coerceRole(value: unknown) {
+  if (typeof value !== "string") return "user";
+  const normalized = value.trim().toLowerCase();
+  if ((USER_ROLES as readonly string[]).includes(normalized)) {
+    return normalized;
+  }
+  return "user";
+}
+
 export function AdminUsersManager() {
   const { toast } = useToast();
+  const { data: sessionData } = authClient.useSession();
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, EditableState>>({});
+  const managerRole = getUserRole(sessionData?.user);
+  const managerGrade = getUserGrade(sessionData?.user);
+  const isManagerAdmin = managerRole === ADMIN_ROLE;
+  const maxAssignableGrade = isManagerAdmin ? 100 : Math.max(0, managerGrade - 1);
+  const roleOptions = isManagerAdmin
+    ? USER_ROLES
+    : USER_ROLES.filter((role) => role !== ADMIN_ROLE);
 
   const sortedUsers = useMemo(
     () => [...users].sort((a, b) => coerceGrade(b.grade) - coerceGrade(a.grade)),
     [users],
   );
+
+  const canEditRow = (row: ManagedUser) => {
+    const targetRole = coerceRole(row.role);
+    const targetGrade = coerceGrade(row.grade);
+
+    if (targetRole === ADMIN_ROLE) return false;
+    if (isManagerAdmin) return true;
+    return targetGrade < managerGrade;
+  };
 
   const refreshUsers = async () => {
     setLoading(true);
@@ -99,6 +131,36 @@ export function AdminUsersManager() {
   const saveUser = async (userId: string) => {
     const draft = drafts[userId];
     if (!draft) return;
+    const currentUser = users.find((row) => row.id === userId);
+    if (!currentUser) return;
+    if (!canEditRow(currentUser)) {
+      toast({
+        title: "Accion bloqueada",
+        description: "No tienes jerarquia para modificar este usuario.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const nextRole = coerceRole(draft.role);
+    if (!isManagerAdmin && nextRole === ADMIN_ROLE) {
+      toast({
+        title: "Accion bloqueada",
+        description: "No puedes asignar rol admin.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const nextGrade = coerceGrade(draft.grade);
+    if (!isManagerAdmin && nextGrade >= managerGrade) {
+      toast({
+        title: "Accion bloqueada",
+        description: "No puedes asignar un grado igual o superior al tuyo.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     setSavingUserId(userId);
     try {
@@ -108,8 +170,8 @@ export function AdminUsersManager() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          role: draft.role,
-          grade: coerceGrade(draft.grade),
+          role: nextRole,
+          grade: nextGrade,
         }),
       });
 
@@ -158,7 +220,7 @@ export function AdminUsersManager() {
       <div className="mb-4">
         <h2 className="text-lg font-semibold">Gestion de Usuarios</h2>
         <p className="text-sm text-muted-foreground">
-          Ajusta el rol y grado para controlar permisos globales.
+          Jerarquia activa: solo puedes editar usuarios por debajo de tu nivel.
         </p>
       </div>
 
@@ -169,6 +231,7 @@ export function AdminUsersManager() {
             grade: coerceGrade(row.grade),
           };
           const isSaving = savingUserId === row.id;
+          const canEdit = canEditRow(row);
 
           return (
             <div
@@ -186,9 +249,9 @@ export function AdminUsersManager() {
                   className="h-9 w-full rounded-md border bg-background px-2 text-sm"
                   value={draft.role}
                   onChange={(event) => updateDraft(row.id, { role: event.target.value })}
-                  disabled={isSaving}
+                  disabled={isSaving || !canEdit}
                 >
-                  {USER_ROLES.map((role) => (
+                  {roleOptions.map((role) => (
                     <option key={role} value={role}>
                       {role}
                     </option>
@@ -201,18 +264,20 @@ export function AdminUsersManager() {
                 <Input
                   type="number"
                   min={0}
-                  max={100}
+                  max={maxAssignableGrade}
                   step={1}
                   value={draft.grade}
                   onChange={(event) =>
-                    updateDraft(row.id, { grade: coerceGrade(event.target.value) })
+                    updateDraft(row.id, {
+                      grade: Math.min(coerceGrade(event.target.value), maxAssignableGrade),
+                    })
                   }
-                  disabled={isSaving}
+                  disabled={isSaving || !canEdit}
                 />
               </label>
 
               <div className="flex items-end justify-end">
-                <Button onClick={() => saveUser(row.id)} disabled={isSaving}>
+                <Button onClick={() => saveUser(row.id)} disabled={isSaving || !canEdit}>
                   {isSaving ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -223,6 +288,12 @@ export function AdminUsersManager() {
                   )}
                 </Button>
               </div>
+
+              {!canEdit ? (
+                <p className="text-xs text-muted-foreground md:col-span-4">
+                  Bloqueado por jerarquia o proteccion de admin.
+                </p>
+              ) : null}
             </div>
           );
         })}

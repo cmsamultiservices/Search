@@ -22,6 +22,7 @@ import { authClient } from "@/lib/auth/client";
 import { getUserGrade, getUserRole } from "@/lib/auth/permissions";
 
 type Theme = 'light' | 'dark' | 'system';
+const SECTION_LOCAL_STORAGE_PREFIXES = ["search_history", "recent_history_panel_open"] as const;
 
 export function SettingsDialog() {
   const { settings, updateSettings, resetSettings, isLoaded } = useSettings();
@@ -37,6 +38,7 @@ export function SettingsDialog() {
   const [newExtension, setNewExtension] = useState("");
   const [selectedTheme, setSelectedTheme] = useState<Theme>('system');
   const [sections, setSections] = useState<Section[]>([]);
+  const [baselineSectionIds, setBaselineSectionIds] = useState<string[]>([]);
   const [indexSectionId, setIndexSectionId] = useState("");
   const [duplicateFromSectionId, setDuplicateFromSectionId] = useState("");
   const [newSectionId, setNewSectionId] = useState("");
@@ -59,6 +61,28 @@ export function SettingsDialog() {
   const currentGrade = getUserGrade(sessionData?.user);
 
   const normalizeSectionId = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9-_]/g, '');
+  const getNormalizedSectionIds = (rows: Section[]) =>
+    Array.from(
+      new Set(
+        rows
+          .map((section) => normalizeSectionId(section.id))
+          .filter((sectionId) => sectionId.length > 0),
+      ),
+    );
+  const clearRemovedSectionLocalStorage = (sectionIds: string[]) => {
+    if (typeof window === "undefined" || sectionIds.length === 0) return;
+
+    const uniqueIds = Array.from(new Set(sectionIds.filter((sectionId) => sectionId.length > 0)));
+    uniqueIds.forEach((sectionId) => {
+      SECTION_LOCAL_STORAGE_PREFIXES.forEach((prefix) => {
+        try {
+          localStorage.removeItem(`${prefix}:${sectionId}`);
+        } catch (error) {
+          console.error(`Failed to clear local storage for section ${sectionId}:`, error);
+        }
+      });
+    });
+  };
 
   const handleAddSection = () => {
     const id = normalizeSectionId(newSectionId);
@@ -276,6 +300,11 @@ export function SettingsDialog() {
   };
 
   const handleSave = async () => {
+    const currentSectionIds = getNormalizedSectionIds(sections);
+    const removedSectionIds = baselineSectionIds.filter(
+      (sectionId) => !currentSectionIds.includes(sectionId),
+    );
+
     try {
       await updateSettings({
         indexPaths: settings.indexPaths || [],
@@ -288,6 +317,9 @@ export function SettingsDialog() {
         fileExtensions,
         sections,
       });
+
+      clearRemovedSectionLocalStorage(removedSectionIds);
+      setBaselineSectionIds(currentSectionIds);
 
       toast({
         title: "Éxito",
@@ -320,6 +352,7 @@ export function SettingsDialog() {
       setUseAbrirAdobe(false);
       setFileExtensions(['pdf', 'docx']);
       setSections(DEFAULT_SECTIONS);
+      setBaselineSectionIds(getNormalizedSectionIds(DEFAULT_SECTIONS));
       setIndexSectionId(DEFAULT_SECTIONS[0]?.id || "");
       setDuplicateFromSectionId("");
       setNewPath("");
@@ -401,6 +434,7 @@ export function SettingsDialog() {
         ...section,
         indexPaths: section.indexPaths || [],
       })));
+      setBaselineSectionIds(getNormalizedSectionIds(loadedSections));
       setIndexSectionId(loadedSections[0]?.id || "");
       setDuplicateFromSectionId("");
       setNewSectionId("");

@@ -4,10 +4,14 @@ import { auth } from "@/lib/auth/auth";
 import { authDb } from "@/lib/auth/db";
 import {
   USER_ROLES,
+  canAssignUserGrade,
+  canAssignUserRole,
+  canManageTargetUser,
   canManageUserPermissions,
   getSessionUser,
   getUserGrade,
   getUserRole,
+  isProtectedAdminTarget,
 } from "@/lib/auth/permissions";
 import { user as userTable } from "@/lib/auth/schema";
 
@@ -36,6 +40,38 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "ID de usuario inválido." }, { status: 400 });
   }
 
+  const targetUser = authDb
+    .select({
+      id: userTable.id,
+      name: userTable.name,
+      email: userTable.email,
+      role: userTable.role,
+      grade: userTable.grade,
+      createdAt: userTable.createdAt,
+      updatedAt: userTable.updatedAt,
+    })
+    .from(userTable)
+    .where(eq(userTable.id, userId))
+    .get();
+
+  if (!targetUser) {
+    return NextResponse.json({ error: "Usuario no encontrado." }, { status: 404 });
+  }
+
+  if (isProtectedAdminTarget(targetUser)) {
+    return NextResponse.json(
+      { error: "No se puede modificar un usuario admin." },
+      { status: 403 },
+    );
+  }
+
+  if (!canManageTargetUser(sessionUser, targetUser)) {
+    return NextResponse.json(
+      { error: "Solo puedes gestionar usuarios con menor jerarquia." },
+      { status: 403 },
+    );
+  }
+
   const body = (await request.json().catch(() => null)) as {
     role?: string;
     grade?: number | string;
@@ -44,6 +80,15 @@ export async function PATCH(request: Request, context: RouteContext) {
   const role = typeof body?.role === "string" ? body.role.trim().toLowerCase() : "";
   if (!(USER_ROLES as readonly string[]).includes(role)) {
     return NextResponse.json({ error: "Rol inválido." }, { status: 400 });
+  }
+
+  const nextRole = role as (typeof USER_ROLES)[number];
+
+  if (!canAssignUserRole(sessionUser, nextRole)) {
+    return NextResponse.json(
+      { error: "No puedes asignar rol admin." },
+      { status: 403 },
+    );
   }
 
   const parsedGrade =
@@ -55,10 +100,17 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const grade = Math.max(0, Math.min(100, Math.round(parsedGrade)));
 
+  if (!canAssignUserGrade(sessionUser, grade)) {
+    return NextResponse.json(
+      { error: "No puedes asignar un grado igual o superior al tuyo." },
+      { status: 403 },
+    );
+  }
+
   authDb
     .update(userTable)
     .set({
-      role,
+      role: nextRole,
       grade,
       updatedAt: new Date(),
     })

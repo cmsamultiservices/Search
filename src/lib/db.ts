@@ -286,6 +286,27 @@ function getSettingsInternal(db: SQLiteDatabase): Settings {
   return normalized;
 }
 
+function collectSectionIds(settings: Settings) {
+  const ids = new Set<string>();
+
+  settings.sections.forEach((section) => {
+    const sectionId = normalizeSectionId(section.id);
+    if (!sectionId) return;
+    ids.add(sectionId);
+  });
+
+  return ids;
+}
+
+function deleteSectionDataInternal(db: SQLiteDatabase, sectionIdRaw: string) {
+  const sectionId = normalizeSectionId(sectionIdRaw);
+  if (!sectionId || sectionId === "default") return;
+
+  db.prepare("DELETE FROM document_metadata WHERE section_id = ?").run(sectionId);
+  db.prepare("DELETE FROM documents WHERE section_id = ?").run(sectionId);
+  db.prepare("DELETE FROM search_stats WHERE section_id = ?").run(sectionId);
+}
+
 function mergeLegacyMetadataForDocument(
   document: LegacyDocumentRecord,
   externalMetadataMap: MetadataByDocumentId
@@ -634,8 +655,22 @@ export function getSettings() {
 
 export function saveSettings(rawSettings: unknown) {
   const db = getDb();
+  const previous = getSettingsInternal(db);
   const normalized = normalizeSettings(rawSettings);
-  saveSettingsInternal(db, normalized);
+
+  const previousIds = collectSectionIds(previous);
+  const nextIds = collectSectionIds(normalized);
+  const removedSectionIds = Array.from(previousIds).filter(
+    (sectionId) => !nextIds.has(sectionId) && sectionId !== "default"
+  );
+
+  runInTransactionWithDb(db, () => {
+    saveSettingsInternal(db, normalized);
+    removedSectionIds.forEach((sectionId) => {
+      deleteSectionDataInternal(db, sectionId);
+    });
+  });
+
   return normalized;
 }
 

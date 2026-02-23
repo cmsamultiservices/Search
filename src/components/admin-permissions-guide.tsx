@@ -96,8 +96,16 @@ export function AdminPermissionsGuide() {
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          Nota: el rol admin tiene acceso completo aunque su grado no alcance los
-          umbrales de {GLOBAL_SETTINGS_MIN_GRADE} o {USER_MANAGEMENT_MIN_GRADE}.
+          Jerarquia: un gestor no-admin solo puede editar usuarios con grado menor
+          al suyo y nunca puede asignar rol admin.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Proteccion admin: ningun usuario puede modificar rol o grado de una
+          cuenta que ya sea admin.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Nota: el rol admin mantiene acceso completo aunque su grado no alcance
+          los umbrales de {GLOBAL_SETTINGS_MIN_GRADE} o {USER_MANAGEMENT_MIN_GRADE}.
         </p>
       </div>
     </Card>

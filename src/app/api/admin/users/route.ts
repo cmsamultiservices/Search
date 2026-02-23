@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth/auth";
 import { authDb } from "@/lib/auth/db";
 import {
+  ADMIN_ROLE,
+  canManageTargetUser,
   canManageUserPermissions,
   getSessionUser,
   getUserGrade,
@@ -17,6 +19,7 @@ export async function GET(request: Request) {
     headers: request.headers,
   });
   const sessionUser = getSessionUser(session);
+  const managerRole = getUserRole(sessionUser);
 
   if (!sessionUser || !canManageUserPermissions(sessionUser)) {
     return NextResponse.json(
@@ -39,11 +42,18 @@ export async function GET(request: Request) {
     .orderBy(desc(userTable.createdAt))
     .all();
 
+  const normalizedUsers = users.map((row) => ({
+    ...row,
+    role: getUserRole(row),
+    grade: getUserGrade(row),
+  }));
+
+  const visibleUsers =
+    managerRole === ADMIN_ROLE
+      ? normalizedUsers
+      : normalizedUsers.filter((row) => canManageTargetUser(sessionUser, row));
+
   return NextResponse.json({
-    users: users.map((row) => ({
-      ...row,
-      role: getUserRole(row),
-      grade: getUserGrade(row),
-    })),
+    users: visibleUsers,
   });
 }

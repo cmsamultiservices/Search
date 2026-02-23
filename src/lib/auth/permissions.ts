@@ -56,3 +56,42 @@ export function canManageUserPermissions(user: unknown): boolean {
   const grade = getUserGrade(user);
   return role === ADMIN_ROLE || grade >= USER_MANAGEMENT_MIN_GRADE;
 }
+
+export function isAdminUser(user: unknown): boolean {
+  return getUserRole(user) === ADMIN_ROLE;
+}
+
+// Admin users are protected: nobody can modify an account already marked as admin.
+export function isProtectedAdminTarget(targetUser: unknown): boolean {
+  return getUserRole(targetUser) === ADMIN_ROLE;
+}
+
+// Non-admin managers can only operate over users with lower grade.
+export function canManageTargetUser(managerUser: unknown, targetUser: unknown): boolean {
+  const managerRole = getUserRole(managerUser);
+  if (managerRole === ADMIN_ROLE) {
+    return !isProtectedAdminTarget(targetUser);
+  }
+
+  if (isProtectedAdminTarget(targetUser)) {
+    return false;
+  }
+
+  const managerGrade = getUserGrade(managerUser);
+  const targetGrade = getUserGrade(targetUser);
+  return managerGrade > targetGrade;
+}
+
+// Non-admin managers cannot assign admin role.
+export function canAssignUserRole(managerUser: unknown, nextRole: UserRole): boolean {
+  const managerRole = getUserRole(managerUser);
+  if (managerRole === ADMIN_ROLE) return true;
+  return nextRole !== ADMIN_ROLE;
+}
+
+// Non-admin managers cannot assign a grade equal or above their own grade.
+export function canAssignUserGrade(managerUser: unknown, nextGrade: number): boolean {
+  const managerRole = getUserRole(managerUser);
+  if (managerRole === ADMIN_ROLE) return true;
+  return nextGrade < getUserGrade(managerUser);
+}
