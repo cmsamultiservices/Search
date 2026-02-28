@@ -11,34 +11,15 @@ import {
 } from "@/lib/auth/permissions";
 import * as schema from "@/lib/auth/schema";
 
-function normalizeOrigin(value: string) {
-  try {
-    const url = new URL(value.trim());
-    return url.origin;
-  } catch {
-    return null;
-  }
-}
-
-function parseOrigins(value: string | undefined) {
-  if (!value) return [];
-  return value
-    .split(",")
-    .map((item) => normalizeOrigin(item))
-    .filter((item): item is string => Boolean(item));
-}
-
-const explicitBaseUrl = normalizeOrigin(process.env.BETTER_AUTH_URL || "");
-const extraTrustedOrigins = parseOrigins(process.env.BETTER_AUTH_TRUSTED_ORIGINS);
-
-const authBaseUrl = explicitBaseUrl || "http://localhost:9002";
-const trustedOrigins = Array.from(new Set([authBaseUrl, ...extraTrustedOrigins]));
+const authBaseUrl =
+  process.env.BETTER_AUTH_URL ||
+  process.env.NEXT_PUBLIC_BETTER_AUTH_URL ||
+  "http://localhost:9002";
 
 const authSecret = process.env.BETTER_AUTH_SECRET || "change-this-secret-in-production";
 
 export const auth = betterAuth({
   baseURL: authBaseUrl,
-  trustedOrigins,
   secret: authSecret,
   database: drizzleAdapter(authDb, {
     provider: "sqlite",
