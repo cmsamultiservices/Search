@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth/auth";
 import { authDb } from "@/lib/auth/db";
 import {
+  ADMIN_ROLE,
+  SU_ROLE,
   USER_ROLES,
   canAssignUserGrade,
   canAssignUserRole,
@@ -11,7 +13,6 @@ import {
   getSessionUser,
   getUserGrade,
   getUserRole,
-  isProtectedAdminTarget,
 } from "@/lib/auth/permissions";
 import { user as userTable } from "@/lib/auth/schema";
 
@@ -58,16 +59,11 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Usuario no encontrado." }, { status: 404 });
   }
 
-  if (isProtectedAdminTarget(targetUser)) {
-    return NextResponse.json(
-      { error: "No se puede modificar un usuario admin." },
-      { status: 403 },
-    );
-  }
+  const managerRole = getUserRole(sessionUser);
 
   if (!canManageTargetUser(sessionUser, targetUser)) {
     return NextResponse.json(
-      { error: "Solo puedes gestionar usuarios con menor jerarquia." },
+      { error: "No puedes gestionar este usuario por jerarquia de permisos." },
       { status: 403 },
     );
   }
@@ -84,9 +80,33 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const nextRole = role as (typeof USER_ROLES)[number];
 
+  if (nextRole === SU_ROLE) {
+    const existingSuperUser = authDb
+      .select({ id: userTable.id })
+      .from(userTable)
+      .where(eq(userTable.role, SU_ROLE))
+      .get();
+
+    const hasDifferentSuperUser = !!existingSuperUser && existingSuperUser.id !== userId;
+    if (hasDifferentSuperUser) {
+      return NextResponse.json(
+        { error: "Ya existe un usuario Super SU. Solo puede existir uno." },
+        { status: 409 },
+      );
+    }
+
+    const canBootstrapSuperUser = managerRole === ADMIN_ROLE && !existingSuperUser;
+    if (managerRole !== SU_ROLE && !canBootstrapSuperUser) {
+      return NextResponse.json(
+        { error: "Solo un SU puede asignar este rol." },
+        { status: 403 },
+      );
+    }
+  }
+
   if (!canAssignUserRole(sessionUser, nextRole)) {
     return NextResponse.json(
-      { error: "No puedes asignar rol admin." },
+      { error: "No puedes asignar este rol." },
       { status: 403 },
     );
   }

@@ -14,9 +14,13 @@ type RoleGuide = {
 };
 
 const ROLE_GUIDE: Record<UserRole, RoleGuide> = {
+  su: {
+    summary: "Super usuario con maxima jerarquia.",
+    gradeRule: "Puede administrar todo el sistema, incluyendo cuentas admin.",
+  },
   admin: {
     summary: "Control total del sistema.",
-    gradeRule: "Siempre puede administrar configuracion global y usuarios.",
+    gradeRule: "Administra el sistema, pero no puede modificar cuentas SU.",
   },
   manager: {
     summary: "Rol organizativo sin privilegios especiales por si solo.",
@@ -86,7 +90,7 @@ export function AdminPermissionsGuide() {
           {USER_ROLES.map((role) => (
             <div key={role} className="rounded-lg border p-3">
               <div className="mb-1 flex items-center gap-2">
-                <Badge variant={role === "admin" ? "default" : "secondary"}>
+                <Badge variant={role === "su" || role === "admin" ? "default" : "secondary"}>
                   {formatRole(role)}
                 </Badge>
               </div>
@@ -108,15 +112,15 @@ export function AdminPermissionsGuide() {
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          Jerarquia: un gestor no-admin solo puede editar usuarios con grado menor
-          al suyo y nunca puede asignar rol admin.
+          Jerarquia: SU esta por encima de admin. Un gestor sin rol administrativo
+          solo puede editar usuarios con grado menor al suyo.
         </p>
         <p className="text-xs text-muted-foreground">
-          Proteccion admin: ningun usuario puede modificar rol o grado de una
-          cuenta que ya sea admin.
+          Roles protegidos: solo SU puede modificar cuentas admin. Las cuentas SU
+          no se pueden modificar desde esta gestion.
         </p>
         <p className="text-xs text-muted-foreground">
-          Nota: el rol admin mantiene acceso completo aunque su grado no alcance
+          Nota: los roles SU y admin mantienen acceso completo aunque su grado no alcance
           los umbrales de {GLOBAL_SETTINGS_MIN_GRADE} o {USER_MANAGEMENT_MIN_GRADE}.
         </p>
       </div>

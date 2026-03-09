@@ -1,6 +1,7 @@
 import { isTicketServiceType, type TicketServiceType } from "@/lib/tickets-shared";
 
 export const USER_ROLES = [
+  "su",
   "admin",
   "manager",
   "editor",
@@ -11,17 +12,13 @@ export const USER_ROLES = [
   "user",
 ] as const;
 
-export const REGISTERABLE_USER_ROLES = [
-  "servicio",
-  "caja",
-  "digitacion",
-  "admin",
-  "user",
-] as const;
+export const REGISTERABLE_USER_ROLES = ["user"] as const;
 
 export type UserRole = (typeof USER_ROLES)[number];
 export type RegisterableUserRole = (typeof REGISTERABLE_USER_ROLES)[number];
 
+export const SU_ROLE: UserRole = "su";
+export const SU_GRADE = 100;
 export const DEFAULT_USER_ROLE: UserRole = "user";
 export const DEFAULT_USER_GRADE = 1;
 export const ADMIN_ROLE: UserRole = "admin";
@@ -30,6 +27,7 @@ export const GLOBAL_SETTINGS_MIN_GRADE = 70;
 export const USER_MANAGEMENT_MIN_GRADE = 90;
 
 const ROLE_DEFAULT_GRADE: Record<UserRole, number> = {
+  su: SU_GRADE,
   admin: ADMIN_GRADE,
   manager: 80,
   editor: 55,
@@ -41,6 +39,7 @@ const ROLE_DEFAULT_GRADE: Record<UserRole, number> = {
 };
 
 export const USER_ROLE_LABELS: Record<UserRole, string> = {
+  su: "Super SU",
   admin: "Administrador",
   manager: "Manager",
   editor: "Editor",
@@ -50,7 +49,6 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   digitacion: "Digitacion",
   user: "Usuario",
 };
-
 type UnknownRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -59,6 +57,15 @@ function isRecord(value: unknown): value is UnknownRecord {
 
 function normalizeRoleAlias(value: string) {
   const normalized = value.toLowerCase().trim();
+  if (normalized === "su") return SU_ROLE;
+  if (normalized === "super") return SU_ROLE;
+  if (normalized === "superuser") return SU_ROLE;
+  if (normalized === "super user") return SU_ROLE;
+  if (normalized === "superusuario") return SU_ROLE;
+  if (normalized === "super usuario") return SU_ROLE;
+  if (normalized === "super_su") return SU_ROLE;
+  if (normalized === "super-su") return SU_ROLE;
+  if (normalized === "super su") return SU_ROLE;
   if (normalized === "administrador") return ADMIN_ROLE;
   if (normalized === "ser") return "servicio";
   if (normalized === "dig") return "digitacion";
@@ -81,11 +88,7 @@ export function normalizeUserRoleInput(value: unknown): UserRole {
 
 export function normalizeRegisterableRoleInput(value: unknown): RegisterableUserRole {
   const normalized = normalizeRoleAlias(typeof value === "string" ? value : "");
-
-  if ((REGISTERABLE_USER_ROLES as readonly string[]).includes(normalized)) {
-    return normalized as RegisterableUserRole;
-  }
-
+  if (normalized === DEFAULT_USER_ROLE) return "user";
   return "user";
 }
 
@@ -116,21 +119,27 @@ export function getUserGrade(user: unknown): number {
   return clamped;
 }
 
+export function hasAdminPrivileges(user: unknown): boolean {
+  const role = getUserRole(user);
+  return role === SU_ROLE || role === ADMIN_ROLE;
+}
+
 export function canAccessGlobalSettings(user: unknown): boolean {
   const role = getUserRole(user);
   const grade = getUserGrade(user);
-  return role === ADMIN_ROLE || grade >= GLOBAL_SETTINGS_MIN_GRADE;
+  return role === SU_ROLE || role === ADMIN_ROLE || grade >= GLOBAL_SETTINGS_MIN_GRADE;
 }
 
 export function canManageUserPermissions(user: unknown): boolean {
   const role = getUserRole(user);
   const grade = getUserGrade(user);
-  return role === ADMIN_ROLE || grade >= USER_MANAGEMENT_MIN_GRADE;
+  return role === SU_ROLE || role === ADMIN_ROLE || grade >= USER_MANAGEMENT_MIN_GRADE;
 }
 
 export function canAccessTurnosModule(user: unknown): boolean {
   const role = getUserRole(user);
   return (
+    role === SU_ROLE ||
     role === ADMIN_ROLE ||
     role === "manager" ||
     role === "servicio" ||
@@ -155,6 +164,7 @@ export function canOperateTicketService(
 export function canCreateTicketsForAnyStation(user: unknown): boolean {
   const role = getUserRole(user);
   return (
+    role === SU_ROLE ||
     role === ADMIN_ROLE ||
     role === "manager" ||
     canAccessGlobalSettings(user)
@@ -174,9 +184,7 @@ export function canCreateTicketForService(
 }
 
 export function getDefaultLandingPath(user: unknown): string {
-  const role = getUserRole(user);
-
-  if (role === ADMIN_ROLE || canAccessGlobalSettings(user)) {
+  if (hasAdminPrivileges(user) || canAccessGlobalSettings(user)) {
     return "/dashboard";
   }
 
@@ -188,22 +196,32 @@ export function getDefaultLandingPath(user: unknown): string {
 }
 
 export function isAdminUser(user: unknown): boolean {
-  return getUserRole(user) === ADMIN_ROLE;
+  return hasAdminPrivileges(user);
 }
 
-// Admin users are protected: nobody can modify an account already marked as admin.
+// Super users are protected: only SU can manage other admin-level accounts.
 export function isProtectedAdminTarget(targetUser: unknown): boolean {
-  return getUserRole(targetUser) === ADMIN_ROLE;
+  return getUserRole(targetUser) === SU_ROLE;
 }
 
-// Non-admin managers can only operate over users with lower grade.
+// Hierarchy: SU > admin > grade-based managers.
 export function canManageTargetUser(managerUser: unknown, targetUser: unknown): boolean {
   const managerRole = getUserRole(managerUser);
-  if (managerRole === ADMIN_ROLE) {
-    return !isProtectedAdminTarget(targetUser);
+  const targetRole = getUserRole(targetUser);
+
+  if (managerRole === SU_ROLE) {
+    return targetRole !== SU_ROLE;
   }
 
-  if (isProtectedAdminTarget(targetUser)) {
+  if (targetRole === SU_ROLE) {
+    return false;
+  }
+
+  if (managerRole === ADMIN_ROLE) {
+    return targetRole !== ADMIN_ROLE;
+  }
+
+  if (targetRole === ADMIN_ROLE) {
     return false;
   }
 
@@ -212,16 +230,17 @@ export function canManageTargetUser(managerUser: unknown, targetUser: unknown): 
   return managerGrade > targetGrade;
 }
 
-// Non-admin managers cannot assign admin role.
+// SU/admin can assign any role. Other managers cannot assign admin-level roles.
 export function canAssignUserRole(managerUser: unknown, nextRole: UserRole): boolean {
   const managerRole = getUserRole(managerUser);
+  if (managerRole === SU_ROLE) return true;
   if (managerRole === ADMIN_ROLE) return true;
-  return nextRole !== ADMIN_ROLE;
+  return nextRole !== ADMIN_ROLE && nextRole !== SU_ROLE;
 }
 
-// Non-admin managers cannot assign a grade equal or above their own grade.
+// SU/admin can assign any grade. Others stay below their own grade.
 export function canAssignUserGrade(managerUser: unknown, nextGrade: number): boolean {
   const managerRole = getUserRole(managerUser);
-  if (managerRole === ADMIN_ROLE) return true;
+  if (managerRole === SU_ROLE || managerRole === ADMIN_ROLE) return true;
   return nextGrade < getUserGrade(managerUser);
 }

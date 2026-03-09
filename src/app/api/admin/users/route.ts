@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth/auth";
 import { authDb } from "@/lib/auth/db";
 import {
   ADMIN_ROLE,
+  SU_ROLE,
   canManageTargetUser,
   canManageUserPermissions,
   getSessionUser,
@@ -49,7 +50,7 @@ export async function GET(request: Request) {
   }));
 
   const visibleUsers =
-    managerRole === ADMIN_ROLE
+    managerRole === SU_ROLE || managerRole === ADMIN_ROLE
       ? normalizedUsers
       : normalizedUsers.filter((row) => canManageTargetUser(sessionUser, row));
 

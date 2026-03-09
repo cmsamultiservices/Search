@@ -4,6 +4,7 @@ import { AdminUsersManager } from "@/components/admin-users-manager";
 import { Card } from "@/components/ui/card";
 import {
   ADMIN_ROLE,
+  SU_ROLE,
   canAccessGlobalSettings,
   canManageUserPermissions,
   getSessionUser,
@@ -22,7 +23,7 @@ export default async function DashboardPage() {
   const sessionUser = getSessionUser(session);
   const role = getUserRole(sessionUser);
   const grade = getUserGrade(sessionUser);
-  const isAdmin = role === ADMIN_ROLE;
+  const isAdmin = role === ADMIN_ROLE || role === SU_ROLE;
   const hasGlobalSettingsAccess = canAccessGlobalSettings(sessionUser);
   const canManageUsers = canManageUserPermissions(sessionUser);
   const userName =
@@ -70,7 +71,7 @@ export default async function DashboardPage() {
         <AdminUsersManager />
       ) : (
         <Card className="p-6 text-sm text-muted-foreground">
-          No tienes permiso para gestionar usuarios. Se requiere grado alto o rol admin.
+          No tienes permiso para gestionar usuarios. Se requiere grado alto o rol admin/SU.
         </Card>
       )}
     </section>

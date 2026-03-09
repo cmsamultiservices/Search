@@ -8,24 +8,29 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { authClient } from "@/lib/auth/client";
 import {
-  ADMIN_ROLE,
+  DEFAULT_USER_ROLE,
+  SU_ROLE,
   USER_ROLES,
+  USER_ROLE_LABELS,
+  canAssignUserGrade,
+  canAssignUserRole,
+  canManageTargetUser,
   getUserGrade,
-  getUserRole,
+  type UserRole,
 } from "@/lib/auth/permissions";
 
 type ManagedUser = {
   id: string;
   name: string;
   email: string;
-  role: string | null;
+  role: UserRole | null;
   grade: number | null;
   createdAt: string | number | Date;
   updatedAt: string | number | Date;
 };
 
 type EditableState = {
-  role: string;
+  role: UserRole;
   grade: number;
 };
 
@@ -35,13 +40,13 @@ function coerceGrade(value: unknown) {
   return Math.max(0, Math.min(100, Math.round(num)));
 }
 
-function coerceRole(value: unknown) {
-  if (typeof value !== "string") return "user";
+function coerceRole(value: unknown): UserRole {
+  if (typeof value !== "string") return DEFAULT_USER_ROLE;
   const normalized = value.trim().toLowerCase();
   if ((USER_ROLES as readonly string[]).includes(normalized)) {
-    return normalized;
+    return normalized as UserRole;
   }
-  return "user";
+  return DEFAULT_USER_ROLE;
 }
 
 export function AdminUsersManager() {
@@ -51,26 +56,36 @@ export function AdminUsersManager() {
   const [loading, setLoading] = useState(true);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, EditableState>>({});
-  const managerRole = getUserRole(sessionData?.user);
-  const managerGrade = getUserGrade(sessionData?.user);
-  const isManagerAdmin = managerRole === ADMIN_ROLE;
-  const maxAssignableGrade = isManagerAdmin ? 100 : Math.max(0, managerGrade - 1);
-  const roleOptions = isManagerAdmin
-    ? USER_ROLES
-    : USER_ROLES.filter((role) => role !== ADMIN_ROLE);
+  const managerUser = sessionData?.user;
+  const managerGrade = getUserGrade(managerUser);
+  const managerId =
+    managerUser && typeof managerUser.id === "string" ? managerUser.id : "";
+  const canAssignMaxGrade = canAssignUserGrade(managerUser, 100);
+  const maxAssignableGrade = canAssignMaxGrade ? 100 : Math.max(0, managerGrade - 1);
 
   const sortedUsers = useMemo(
     () => [...users].sort((a, b) => coerceGrade(b.grade) - coerceGrade(a.grade)),
     [users],
   );
+  const hasSuperUser = useMemo(
+    () => users.some((row) => coerceRole(row.role) === SU_ROLE),
+    [users],
+  );
 
   const canEditRow = (row: ManagedUser) => {
-    const targetRole = coerceRole(row.role);
-    const targetGrade = coerceGrade(row.grade);
+    if (managerId && row.id === managerId) return false;
+    return canManageTargetUser(managerUser, row);
+  };
 
-    if (targetRole === ADMIN_ROLE) return false;
-    if (isManagerAdmin) return true;
-    return targetGrade < managerGrade;
+  const resolveRoleOptions = (currentRoleRaw: unknown): UserRole[] => {
+    const currentRole = coerceRole(currentRoleRaw);
+    let assignableRoles = USER_ROLES.filter((role) => canAssignUserRole(managerUser, role));
+    if (hasSuperUser && currentRole !== SU_ROLE) {
+      assignableRoles = assignableRoles.filter((role) => role !== SU_ROLE);
+    }
+
+    if (assignableRoles.includes(currentRole)) return assignableRoles;
+    return [currentRole, ...assignableRoles];
   };
 
   const refreshUsers = async () => {
@@ -94,7 +109,7 @@ export function AdminUsersManager() {
           rows.map((row) => [
             row.id,
             {
-              role: row.role || "user",
+              role: coerceRole(row.role),
               grade: coerceGrade(row.grade),
             },
           ]),
@@ -121,7 +136,7 @@ export function AdminUsersManager() {
     setDrafts((prev) => ({
       ...prev,
       [userId]: {
-        role: prev[userId]?.role || "user",
+        role: coerceRole(prev[userId]?.role),
         grade: coerceGrade(prev[userId]?.grade),
         ...next,
       },
@@ -143,17 +158,17 @@ export function AdminUsersManager() {
     }
 
     const nextRole = coerceRole(draft.role);
-    if (!isManagerAdmin && nextRole === ADMIN_ROLE) {
+    if (!canAssignUserRole(managerUser, nextRole)) {
       toast({
         title: "Accion bloqueada",
-        description: "No puedes asignar rol admin.",
+        description: "No puedes asignar este rol.",
         variant: "destructive",
       });
       return;
     }
 
     const nextGrade = coerceGrade(draft.grade);
-    if (!isManagerAdmin && nextGrade >= managerGrade) {
+    if (!canAssignUserGrade(managerUser, nextGrade)) {
       toast({
         title: "Accion bloqueada",
         description: "No puedes asignar un grado igual o superior al tuyo.",
@@ -227,11 +242,12 @@ export function AdminUsersManager() {
       <div className="space-y-3">
         {sortedUsers.map((row) => {
           const draft = drafts[row.id] || {
-            role: row.role || "user",
+            role: coerceRole(row.role),
             grade: coerceGrade(row.grade),
           };
           const isSaving = savingUserId === row.id;
           const canEdit = canEditRow(row);
+          const roleOptions = resolveRoleOptions(row.role);
 
           return (
             <div
@@ -248,12 +264,14 @@ export function AdminUsersManager() {
                 <select
                   className="h-9 w-full rounded-md border bg-background px-2 text-sm"
                   value={draft.role}
-                  onChange={(event) => updateDraft(row.id, { role: event.target.value })}
+                  onChange={(event) =>
+                    updateDraft(row.id, { role: coerceRole(event.target.value) })
+                  }
                   disabled={isSaving || !canEdit}
                 >
                   {roleOptions.map((role) => (
                     <option key={role} value={role}>
-                      {role}
+                      {USER_ROLE_LABELS[role]}
                     </option>
                   ))}
                 </select>
@@ -291,7 +309,7 @@ export function AdminUsersManager() {
 
               {!canEdit ? (
                 <p className="text-xs text-muted-foreground md:col-span-4">
-                  Bloqueado por jerarquia o proteccion de admin.
+                  Bloqueado por jerarquia, proteccion de SU/admin o autoedicion.
                 </p>
               ) : null}
             </div>

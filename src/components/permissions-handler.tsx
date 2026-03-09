@@ -39,6 +39,7 @@ const PERMISSION_FLOW: UserRole[] = [
   "editor",
   "manager",
   "admin",
+  "su",
 ];
 
 function clampPermissionIndex(index: number) {

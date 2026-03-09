@@ -1,5 +1,8 @@
 import { Suspense } from "react";
+import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/login-form";
+import { getSessionUser } from "@/lib/auth/permissions";
+import { getServerSession } from "@/lib/auth/server";
 
 function LoginFallback() {
   return (
@@ -11,7 +14,14 @@ function LoginFallback() {
   );
 }
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const session = await getServerSession();
+  const sessionUser = getSessionUser(session);
+
+  if (sessionUser) {
+    redirect("/");
+  }
+
   return (
     <Suspense fallback={<LoginFallback />}>
       <LoginForm />
